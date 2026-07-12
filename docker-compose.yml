@@ -1,0 +1,51 @@
+services:
+  marquee:
+    image: ghcr.io/atvriders/marquee:latest
+    container_name: marquee
+    restart: unless-stopped
+    ports:
+      - "3022:3022"
+    environment:
+      # Required: your TMDB v4 "API Read Access Token".
+      - TMDB_TOKEN=${TMDB_TOKEN:?set TMDB_TOKEN to your TMDB v4 read token}
+      # Which lists to pull (comma-separated): upcoming,now_playing,popular,trending_day,trending_week
+      - SOURCES=upcoming,now_playing
+      - COUNT=50
+      - REGION=US
+      - LANGUAGE=en-US
+      - CONTAINER=mkv
+      - MAX_HEIGHT=1080
+      - GRACE_DAYS=0          # keep a trailer this many days after its digital release
+      - TZ=America/Chicago
+      - REFRESH_CRON=0 3 * * *
+      - REAPER_CRON=0 4 * * *
+      # --- Jellyfin integration (optional, recommended for clean auto-delete) ---
+      # - JELLYFIN_URL=http://jellyfin:8096
+      # - JELLYFIN_API_KEY=your_api_key           # Dashboard -> API Keys (used for scans)
+      # - JELLYFIN_USER=admin                     # admin login (needed for clean item delete)
+      # - JELLYFIN_PASS=your_admin_password
+      # --- Advanced yt-dlp (optional; help with datacenter-IP bot-blocking) ---
+      # - YTDLP_COOKIES=/config/cookies.txt
+      # - YTDLP_PROXY=http://user:pass@host:port
+    volumes:
+      - ./library:/library     # the "Coming Soon" movies library (share with Jellyfin)
+      - ./config:/config       # state db, yt-dlp cache, optional cookies.txt
+
+  # --------------------------------------------------------------------------
+  # Example Jellyfin that reads the same Coming-Soon library. Uncomment to run
+  # both together. The KEY detail: mount the SAME host path (./library) into
+  # Jellyfin, then add it as a *Movies* library (see README for the exact setup).
+  # --------------------------------------------------------------------------
+  # jellyfin:
+  #   image: jellyfin/jellyfin:latest
+  #   container_name: jellyfin
+  #   restart: unless-stopped
+  #   ports:
+  #     - "8096:8096"
+  #   environment:
+  #     - PUID=1000
+  #     - PGID=1000
+  #   volumes:
+  #     - ./jellyfin/config:/config
+  #     - ./jellyfin/cache:/cache
+  #     - ./library:/media/coming-soon:ro   # same host path as marquee's /library

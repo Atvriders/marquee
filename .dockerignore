@@ -1,0 +1,22 @@
+# VCS / tooling
+.git
+.gitignore
+.github
+
+# Python
+**/__pycache__
+**/*.pyc
+backend/.venv
+**/*.egg-info
+.pytest_cache
+.ruff_cache
+
+# Node / build output (the image rebuilds the SPA from source)
+frontend/node_modules
+frontend/dist
+backend/marquee/api/static
+
+# Scratch / docs (not needed in the image)
+.superpowers
+docs
+*.md

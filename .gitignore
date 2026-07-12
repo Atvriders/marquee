@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+dist/
+
+# Generated frontend bundle (copied into the backend image at build time)
+backend/marquee/api/static/
+
+# App state / local
+/config/
+/library/
+*.db
+.env
+cookies.txt

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<movie>
+  <title>Dune: Part Three</title>
+  <originaltitle>Dune: Part Three</originaltitle>
+  <sorttitle>Dune: Part Three</sorttitle>
+  <plot>COMING SOON. The saga concludes. In theaters 2026-12-18.</plot>
+  <runtime>166</runtime>
+  <year>2026</year>
+  <premiered>2026-12-18</premiered>
+  <releasedate>2026-12-18</releasedate>
+  <mpaa>PG-13</mpaa>
+  <genre>Science Fiction</genre>
+  <genre>Adventure</genre>
+  <studio>Legendary Pictures</studio>
+  <tag>Coming Soon</tag>
+  <tag>Trailer</tag>
+  <uniqueid type="tmdb" default="true">1234567</uniqueid>
+  <tmdbid>1234567</tmdbid>
+  <thumb aspect="poster">poster.jpg</thumb>
+  <fanart>
+    <thumb>backdrop.jpg</thumb>
+  </fanart>
+</movie>
