@@ -24,12 +24,16 @@ services:
       # - JELLYFIN_API_KEY=your_api_key           # Dashboard -> API Keys (used for scans)
       # - JELLYFIN_USER=admin                     # admin login (needed for clean item delete)
       # - JELLYFIN_PASS=your_admin_password
-      # --- Advanced yt-dlp (optional; help with datacenter-IP bot-blocking) ---
-      # - YTDLP_COOKIES=/config/cookies.txt
+      # --- yt-dlp cookies (recommended — fixes age-gated / "confirm you're not a bot"
+      #     trailers). TO PASTE COOKIES: create ./config/cookies.txt next to this file
+      #     and paste a Netscape-format cookies export into it, then
+      #     `docker compose restart marquee`. The path below is read automatically;
+      #     if the file isn't there yet it's safely ignored. ---
+      - YTDLP_COOKIES=/config/cookies.txt
       # - YTDLP_PROXY=http://user:pass@host:port
     volumes:
       - ./library:/library     # the "Coming Soon" movies library (share with Jellyfin)
-      - ./config:/config       # state db, yt-dlp cache, optional cookies.txt
+      - ./config:/config       # state db + yt-dlp cache. PASTE COOKIES HERE -> ./config/cookies.txt
 
   # --------------------------------------------------------------------------
   # Example Jellyfin that reads the same Coming-Soon library. Uncomment to run

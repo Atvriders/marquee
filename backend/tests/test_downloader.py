@@ -58,18 +58,27 @@ def test_build_options_exact(tmp_path):
 
 
 def test_build_options_cookies_proxy_and_maxheight(tmp_path):
+    cookies = tmp_path / "cookies.txt"
+    cookies.write_text("# Netscape HTTP Cookie File\n")
     cfg = make_config(
         tmp_path,
         max_height=720,
         container="mp4",
-        ytdlp_cookies="/config/cookies.txt",
+        ytdlp_cookies=str(cookies),
         ytdlp_proxy="http://p:8080",
     )
     opts = TrailerDownloader(cfg)._build_options(str(tmp_path / "d"))
     assert opts["format"] == "bv*[height<=720]+ba/b[height<=720]/b"
     assert opts["merge_output_format"] == "mp4"
-    assert opts["cookiefile"] == "/config/cookies.txt"
+    assert opts["cookiefile"] == str(cookies)
     assert opts["proxy"] == "http://p:8080"
+
+
+def test_build_options_cookies_ignored_when_file_missing(tmp_path):
+    # A configured-but-absent cookies path must be silently skipped (safe default).
+    cfg = make_config(tmp_path, ytdlp_cookies=str(tmp_path / "nope-cookies.txt"))
+    opts = TrailerDownloader(cfg)._build_options(str(tmp_path / "d"))
+    assert "cookiefile" not in opts
 
 
 def test_download_success(monkeypatch, tmp_path):

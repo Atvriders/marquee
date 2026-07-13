@@ -67,7 +67,10 @@ class TrailerDownloader:
         opts["download_archive"] = os.path.join(
             self.config.config_dir, "download_archive.txt"
         )
-        if self.config.ytdlp_cookies:
+        # Only pass the cookies file if it actually exists — this lets the default
+        # YTDLP_COOKIES=/config/cookies.txt be set safely before the user has pasted
+        # a cookies.txt in (yt-dlp errors on a missing cookiefile otherwise).
+        if self.config.ytdlp_cookies and os.path.isfile(self.config.ytdlp_cookies):
             opts["cookiefile"] = self.config.ytdlp_cookies
         if self.config.ytdlp_proxy:
             opts["proxy"] = self.config.ytdlp_proxy
