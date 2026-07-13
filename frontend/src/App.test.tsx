@@ -14,6 +14,8 @@ vi.mock("./api", () => ({
       ytdlp_version: "test",
     }),
     getMovies: vi.fn().mockResolvedValue([]),
+    getConnections: vi.fn().mockResolvedValue({ tmdb: "ok", jellyfin: "not_configured" }),
+    activityUrl: () => "/api/activity",
   },
 }));
 

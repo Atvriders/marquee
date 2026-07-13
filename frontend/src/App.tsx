@@ -1,5 +1,6 @@
 import { NavLink, Route, Routes } from "react-router-dom";
 import { StatusBar } from "./components/StatusBar";
+import { ConnectionStatus } from "./components/ConnectionStatus";
 import { DashboardPage } from "./pages/DashboardPage";
 import { ActivityPage } from "./pages/ActivityPage";
 import { SettingsPage } from "./pages/SettingsPage";
@@ -18,6 +19,7 @@ export function App() {
           <NavLink to="/activity">Activity</NavLink>
           <NavLink to="/settings">Settings</NavLink>
         </nav>
+        <ConnectionStatus />
       </header>
       <StatusBar />
       <main className="app-main">

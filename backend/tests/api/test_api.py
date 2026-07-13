@@ -185,6 +185,27 @@ def test_jellyfin_test(tmp_path):
     assert client.post("/api/jellyfin/test").json() == {"ok": True}
 
 
+@respx.mock
+def test_connections(tmp_path):
+    respx.get("https://api.themoviedb.org/3/configuration").mock(
+        return_value=httpx.Response(200, json={"images": {"secure_base_url": "https://img/t/p/"}})
+    )
+    client, *_ = build(tmp_path)  # no jellyfin configured
+    body = client.get("/api/connections").json()
+    assert body["tmdb"] == "ok"
+    assert body["jellyfin"] == "not_configured"
+
+
+@respx.mock
+def test_connections_tmdb_error(tmp_path):
+    respx.get("https://api.themoviedb.org/3/configuration").mock(
+        return_value=httpx.Response(401, json={"status_message": "invalid token"})
+    )
+    client, *_ = build(tmp_path)
+    body = client.get("/api/connections").json()
+    assert body["tmdb"] in ("unauthorized", "error")
+
+
 def test_spa_catch_all_does_not_shadow_api(tmp_path):
     static = tmp_path / "static"
     static.mkdir()

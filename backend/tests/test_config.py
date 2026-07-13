@@ -74,3 +74,9 @@ def test_apply_setting_overrides_ignores_unknown_and_bad():
     base = load_config({"TMDB_TOKEN": "tok"})
     out = apply_setting_overrides(base, {"nope": "x", "count": "notanint"})
     assert out.count == 50  # unknown key ignored; uncoercible value leaves default
+
+
+def test_ytdlp_cookies_text_from_env():
+    c = load_config({"TMDB_TOKEN": "t", "YTDLP_COOKIES_TEXT": "# Netscape HTTP Cookie File\nx"})
+    assert c.ytdlp_cookies_text == "# Netscape HTTP Cookie File\nx"
+    assert load_config({"TMDB_TOKEN": "t"}).ytdlp_cookies_text is None

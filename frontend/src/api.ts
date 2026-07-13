@@ -1,4 +1,4 @@
-import type { Config, Movie, StatusSummary } from "./types";
+import type { Config, Connections, Movie, StatusSummary } from "./types";
 
 const BASE = "/api";
 
@@ -30,6 +30,7 @@ export const api = {
   runNow: () => req<void>("/run", { method: "POST" }),
   reapNow: () => req<void>("/reap", { method: "POST" }),
   getStatus: () => req<StatusSummary>("/status"),
+  getConnections: () => req<Connections>("/connections"),
   getHealth: () => req<{ status: string }>("/health"),
   updateYtdlp: () => req<{ version: string }>("/ytdlp/update", { method: "POST" }),
   testJellyfin: () => req<{ ok: boolean }>("/jellyfin/test", { method: "POST" }),

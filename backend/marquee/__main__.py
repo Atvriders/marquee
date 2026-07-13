@@ -8,7 +8,7 @@ from marquee.config import Config, load_config
 from marquee.store import Store
 from marquee.tmdb.client import TMDBClient
 from marquee.tmdb.curator import discover, enrich
-from marquee.downloader import TrailerDownloader
+from marquee.downloader import TrailerDownloader, normalize_cookies_text
 from marquee.library.writer import LibraryWriter
 from marquee.library.reaper import Reaper
 from marquee.jellyfin import JellyfinClient
@@ -36,6 +36,19 @@ class Components:
 
 
 def build_components(config: Config) -> Components:
+    # Cookies pasted inline via YTDLP_COOKIES_TEXT are written to a file in /config
+    # (normalized) and the downloader is pointed at it — no separate cookies file
+    # to mount. An explicit YTDLP_COOKIES path still takes precedence.
+    if not config.ytdlp_cookies and config.ytdlp_cookies_text and config.ytdlp_cookies_text.strip():
+        cookies_path = os.path.join(config.config_dir, "cookies.txt")
+        try:
+            os.makedirs(config.config_dir, exist_ok=True)
+            with open(cookies_path, "w", encoding="utf-8") as fh:
+                fh.write(normalize_cookies_text(config.ytdlp_cookies_text))
+            config.ytdlp_cookies = cookies_path
+        except OSError:
+            pass
+
     store = Store(os.path.join(config.config_dir, "state.db"))
     broadcaster = Broadcaster()
     client = TMDBClient(config.tmdb_token)

@@ -10,6 +10,36 @@ from marquee.config import Config
 from marquee.models import ErrorKind
 
 
+def normalize_cookies_text(text: str) -> str:
+    """Normalize a pasted Netscape cookies.txt so it survives copy-paste into a
+    compose/env value. Ensures the required header line, and — because pasting a
+    tab-separated file often turns the tabs into spaces — repairs data lines that
+    have no tabs by re-joining their whitespace-separated fields with tabs
+    (Netscape rows are 7 fields; the last, the value, may itself contain spaces).
+    Lines that already contain tabs are left untouched.
+    """
+    out: list[str] = []
+    has_header = False
+    for raw in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        line = raw.rstrip()
+        stripped = line.strip()
+        if stripped.startswith("# Netscape HTTP Cookie File"):
+            has_header = True
+        if not stripped or (stripped.startswith("#") and not stripped.startswith("#HttpOnly_")):
+            out.append(line)
+            continue
+        if "\t" not in line:
+            parts = line.split()
+            if len(parts) >= 7:
+                line = "\t".join(parts[:6]) + "\t" + " ".join(parts[6:])
+            elif len(parts) == 6:
+                line = "\t".join(parts)
+        out.append(line)
+    body = "\n".join(x for x in out if x.strip() != "")
+    header = "" if has_header else "# Netscape HTTP Cookie File\n"
+    return header + body + "\n"
+
+
 @dataclass
 class ProbeResult:
     ok: bool

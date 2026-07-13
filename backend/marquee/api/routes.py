@@ -13,10 +13,10 @@ from fastapi.responses import StreamingResponse
 from marquee.jellyfin import JellyfinClient
 from marquee.models import Movie, Status
 
-_SECRET_KEYS = {"tmdb_token", "jellyfin_api_key", "jellyfin_pass"}
+_SECRET_KEYS = {"tmdb_token", "jellyfin_api_key", "jellyfin_pass", "ytdlp_cookies_text"}
 # System/path fields that must never be overridden via the Settings API — they're
 # fixed by the deployment (env vars / volume mounts), not user-editable preferences.
-_SYSTEM_KEYS = {"library_dir", "config_dir"}
+_SYSTEM_KEYS = {"library_dir", "config_dir", "ytdlp_cookies", "ytdlp_cookies_text"}
 
 
 _IMG_BASE = "https://image.tmdb.org/t/p"
@@ -198,6 +198,33 @@ def build_router(context) -> APIRouter:
             return {"ok": jc.test()}
         except Exception as e:  # noqa: BLE001
             return {"ok": False, "error": str(e)}
+
+    @router.get("/connections")
+    def connections():
+        # Live health of the external services Marquee depends on. Each value is
+        # "ok" | "error" | "unauthorized" | "not_configured".
+        c = context.config
+        result: dict[str, str] = {}
+
+        try:
+            from marquee.tmdb.client import TMDBClient
+
+            TMDBClient(c.tmdb_token).image_base_url()  # GET /configuration (needs a valid token)
+            result["tmdb"] = "ok"
+        except Exception as e:  # noqa: BLE001
+            result["tmdb"] = "unauthorized" if "401" in str(e) else "error"
+
+        if not c.jellyfin_url:
+            result["jellyfin"] = "not_configured"
+        else:
+            try:
+                jc = JellyfinClient(
+                    c.jellyfin_url, c.jellyfin_api_key or "", c.jellyfin_user, c.jellyfin_pass
+                )
+                result["jellyfin"] = "ok" if jc.test() else "error"
+            except Exception:  # noqa: BLE001
+                result["jellyfin"] = "error"
+        return result
 
     @router.get("/activity")
     async def activity(request: Request):

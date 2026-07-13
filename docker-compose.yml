@@ -5,35 +5,42 @@ services:
     restart: unless-stopped
     ports:
       - "3022:3022"
+    # NOTE: environment uses the mapping (KEY: value) style so cookies can be pasted
+    # inline as a multi-line block (see YTDLP_COOKIES_TEXT below).
     environment:
       # Required: your TMDB v4 "API Read Access Token".
-      - TMDB_TOKEN=${TMDB_TOKEN:?set TMDB_TOKEN to your TMDB v4 read token}
+      TMDB_TOKEN: "${TMDB_TOKEN:?set TMDB_TOKEN to your TMDB v4 read token}"
       # Which lists to pull (comma-separated): upcoming,now_playing,popular,trending_day,trending_week
-      - SOURCES=upcoming,now_playing
-      - COUNT=50
-      - REGION=US
-      - LANGUAGE=en-US
-      - CONTAINER=mkv
-      - MAX_HEIGHT=1080
-      - GRACE_DAYS=0          # keep a trailer this many days after its digital release
-      - TZ=America/Chicago
-      - REFRESH_CRON=0 3 * * *
-      - REAPER_CRON=0 4 * * *
+      SOURCES: upcoming,now_playing
+      COUNT: "50"
+      REGION: US
+      LANGUAGE: en-US
+      CONTAINER: mkv
+      MAX_HEIGHT: "1080"
+      GRACE_DAYS: "0"            # keep a trailer this many days after its digital release
+      TZ: America/Chicago
+      REFRESH_CRON: "0 3 * * *"
+      REAPER_CRON: "0 4 * * *"
       # --- Jellyfin integration (optional, recommended for clean auto-delete) ---
-      # - JELLYFIN_URL=http://jellyfin:8096
-      # - JELLYFIN_API_KEY=your_api_key           # Dashboard -> API Keys (used for scans)
-      # - JELLYFIN_USER=admin                     # admin login (needed for clean item delete)
-      # - JELLYFIN_PASS=your_admin_password
-      # --- yt-dlp cookies (recommended — fixes age-gated / "confirm you're not a bot"
-      #     trailers). TO PASTE COOKIES: create ./config/cookies.txt next to this file
-      #     and paste a Netscape-format cookies export into it, then
-      #     `docker compose restart marquee`. The path below is read automatically;
-      #     if the file isn't there yet it's safely ignored. ---
-      - YTDLP_COOKIES=/config/cookies.txt
-      # - YTDLP_PROXY=http://user:pass@host:port
+      # JELLYFIN_URL: http://jellyfin:8096
+      # JELLYFIN_API_KEY: your_api_key            # Dashboard -> API Keys (used for scans)
+      # JELLYFIN_USER: admin                      # admin login (needed for clean item delete)
+      # JELLYFIN_PASS: your_admin_password
+      #
+      # --- PASTE COOKIES INLINE (recommended — fixes age-gated / "confirm you're not
+      #     a bot" trailers). Export a Netscape cookies.txt (e.g. the "Get cookies.txt
+      #     LOCALLY" browser extension while logged into youtube.com), then uncomment
+      #     the block below and paste your lines under it, keeping the 6-space indent.
+      #     Tab/space mangling from pasting is auto-repaired. Then: docker compose up -d
+      # YTDLP_COOKIES_TEXT: |
+      #   # Netscape HTTP Cookie File
+      #   .youtube.com	TRUE	/	TRUE	1799999999	LOGIN_INFO	AFmmF2...
+      #   .youtube.com	TRUE	/	TRUE	1799999999	SID	g.a000...
+      #
+      # YTDLP_PROXY: http://user:pass@host:port
     volumes:
       - ./library:/library     # the "Coming Soon" movies library (share with Jellyfin)
-      - ./config:/config       # state db + yt-dlp cache. PASTE COOKIES HERE -> ./config/cookies.txt
+      - ./config:/config       # persistent state db + yt-dlp cache
 
   # --------------------------------------------------------------------------
   # Example Jellyfin that reads the same Coming-Soon library. Uncomment to run

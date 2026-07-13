@@ -371,6 +371,22 @@ h1, h2, h3 { margin: 0; }
 .settings-actions button:hover, .dashboard-controls button:hover { filter: brightness(1.08); }
 .settings-actions button[data-variant="ghost"] { background: transparent; color: var(--ink); border-color: var(--line-strong); }
 
+/* --------------------------------------------------- connection status --- */
+.conn-status {
+  display: flex; gap: 0.9rem; align-items: center; flex-wrap: wrap;
+  font-family: var(--font-mono); font-size: 0.66rem; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--ink-dim);
+}
+.conn-dot { display: inline-flex; align-items: center; gap: 0.45ch; }
+.conn-led {
+  width: 8px; height: 8px; border-radius: 50%; background: var(--ink-dim); flex: none;
+}
+.conn-ok .conn-led { background: var(--reel); box-shadow: 0 0 7px rgba(111, 179, 166, 0.7); }
+.conn-error .conn-led,
+.conn-unauthorized .conn-led { background: var(--ticket); box-shadow: 0 0 7px rgba(216, 68, 58, 0.6); }
+.conn-not_configured .conn-led { background: #6a5f52; }
+.conn-unknown .conn-led { background: var(--bulb); opacity: 0.5; animation: cd-pulse 1.4s var(--ease) infinite; }
+
 /* --------------------------------------------------------------- mobile --- */
 @media (max-width: 640px) {
   .app-nav { margin-left: 0; width: 100%; }

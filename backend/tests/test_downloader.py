@@ -10,6 +10,7 @@ from marquee.downloader import (
     DownloadResult,
     ProbeResult,
     DownloadFailed,
+    normalize_cookies_text,
 )
 
 
@@ -211,3 +212,24 @@ def test_progress_hook_reports(tmp_path):
         {"status": "downloading", "downloaded_bytes": 50, "total_bytes": 100, "speed": 10.0, "eta": 5}
     )
     assert seen == [(42, 50.0, 10.0, 5)]
+
+
+def test_normalize_cookies_text_repairs_spaces_and_adds_header():
+    # Pasting a tab-separated export often turns tabs into spaces; repair them.
+    out = normalize_cookies_text(".youtube.com TRUE / TRUE 1799999999 SID g.a000abc")
+    assert out.startswith("# Netscape HTTP Cookie File\n")
+    line = next(x for x in out.splitlines() if x.startswith(".youtube.com"))
+    assert line == ".youtube.com\tTRUE\t/\tTRUE\t1799999999\tSID\tg.a000abc"
+
+
+def test_normalize_cookies_text_preserves_existing_tabs_and_header():
+    tabbed = "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tPREF\tf1=x"
+    out = normalize_cookies_text(tabbed)
+    assert out.count("# Netscape HTTP Cookie File") == 1  # header not duplicated
+    assert ".youtube.com\tTRUE\t/\tTRUE\t0\tPREF\tf1=x" in out
+
+
+def test_normalize_cookies_text_value_may_contain_spaces():
+    out = normalize_cookies_text(".x.com TRUE / FALSE 0 NAME a b c")
+    line = next(x for x in out.splitlines() if x.startswith(".x.com"))
+    assert line == ".x.com\tTRUE\t/\tFALSE\t0\tNAME\ta b c"

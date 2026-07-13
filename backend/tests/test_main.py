@@ -62,3 +62,25 @@ def test_main_reap_invokes_reaper(monkeypatch):
     monkeypatch.setattr(m, "load_config", lambda env, overrides=None: object())
     m.main(["reap"])
     assert len(reaper.expired) == 1
+
+
+def test_build_components_materializes_pasted_cookies(tmp_path):
+    from marquee.config import Config
+
+    cfg = Config(
+        tmdb_token="t",
+        sources=["upcoming"],
+        config_dir=str(tmp_path),
+        library_dir=str(tmp_path / "lib"),
+        ytdlp_cookies_text=".youtube.com TRUE / TRUE 0 SID abc",
+    )
+    comps = m.build_components(cfg)
+    try:
+        cookies = tmp_path / "cookies.txt"
+        assert cookies.is_file()
+        assert cfg.ytdlp_cookies == str(cookies)
+        content = cookies.read_text()
+        assert "# Netscape HTTP Cookie File" in content and "\t" in content
+    finally:
+        comps.store.close()
+        comps.client.close()

@@ -25,6 +25,7 @@ class Config:
     jellyfin_user: str | None = None
     jellyfin_pass: str | None = None
     ytdlp_cookies: str | None = None
+    ytdlp_cookies_text: str | None = None  # raw cookies.txt content (materialized to a file)
     ytdlp_proxy: str | None = None
 
 
@@ -63,6 +64,7 @@ def load_config(env: Mapping[str, str], overrides: dict | None = None) -> Config
         jellyfin_user=get("JELLYFIN_USER"),
         jellyfin_pass=get("JELLYFIN_PASS"),
         ytdlp_cookies=get("YTDLP_COOKIES"),
+        ytdlp_cookies_text=get("YTDLP_COOKIES_TEXT"),
         ytdlp_proxy=get("YTDLP_PROXY"),
     )
 

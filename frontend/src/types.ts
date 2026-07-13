@@ -88,6 +88,12 @@ export interface StatusSummary {
   ytdlp_version: string;
 }
 
+// Live health of the external services Marquee talks to.
+export interface Connections {
+  tmdb: string; // "ok" | "unauthorized" | "error"
+  jellyfin: string; // "ok" | "error" | "not_configured"
+}
+
 // SSE payloads on GET /api/activity are one of:
 export type ActivityMessage =
   | { type: "log"; entry: ActivityEntry }
