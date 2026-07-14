@@ -15,6 +15,7 @@ def test_status_and_errorkind_values():
     assert Status.EXPIRED.value == "expired"
     assert ErrorKind.NO_TRAILER.value == "no_trailer"
     assert ErrorKind.BOT_CHECK.value == "bot_check"
+    assert ErrorKind.DRM.value == "drm"
 
 
 def test_trailer_youtube_url():
@@ -28,6 +29,24 @@ def test_trailer_youtube_url():
         published_at="",
     )
     assert tv.youtube_url == "https://www.youtube.com/watch?v=abc123"
+
+
+def test_trailer_url_youtube():
+    tv = TrailerVideo(
+        key="abc123", site="YouTube", type="Trailer", official=True,
+        size=1080, iso_639_1="en", published_at="",
+    )
+    assert tv.url == "https://www.youtube.com/watch?v=abc123"
+    assert tv.youtube_url == tv.url  # youtube_url is now an alias of url
+
+
+def test_trailer_url_vimeo():
+    tv = TrailerVideo(
+        key="123456", site="Vimeo", type="Trailer", official=True,
+        size=1080, iso_639_1="en", published_at="",
+    )
+    assert tv.url == "https://vimeo.com/123456"
+    assert tv.youtube_url == tv.url
 
 
 def test_candidate_construction():
@@ -62,6 +81,7 @@ def test_enriched_defaults():
     assert em.digital_date_source == "none"
     assert em.trailer is None
     assert em.youtube_key is None
+    assert em.trailer_candidates == []
 
 
 def test_movie_construction():

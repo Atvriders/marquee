@@ -40,6 +40,51 @@ def normalize_cookies_text(text: str) -> str:
     return header + body + "\n"
 
 
+def _classify_message(msg: str) -> ErrorKind:
+    m = msg.lower()
+    if (
+        "confirm your age" in m
+        or "inappropriate for some users" in m
+        or "age-restricted" in m
+        or "age restricted" in m
+    ):
+        return ErrorKind.AGE_GATED
+    if "not a bot" in m or ("sign in to confirm" in m and "bot" in m):
+        return ErrorKind.BOT_CHECK
+    if (
+        "not available in your country" in m
+        or "blocked it in your country" in m
+        or "geo" in m
+    ):
+        return ErrorKind.REGION_BLOCKED
+    if "requested format" in m or "no video formats" in m or "no formats" in m:
+        return ErrorKind.NO_FORMAT
+    if "drm" in m:
+        return ErrorKind.DRM
+    if (
+        "unavailable" in m
+        or "private" in m
+        or "removed" in m
+        or "deleted" in m
+        or "terminated" in m
+    ):
+        return ErrorKind.UNAVAILABLE
+    return ErrorKind.ERROR
+
+
+def classify_download_error(exc: BaseException) -> tuple[ErrorKind, str]:
+    """Classify a yt-dlp exception into an (ErrorKind, message) pair.
+
+    Shared by download() and probe() so both surface the real failure reason
+    (age-gate / bot-check / region-block / unavailable / no-format / generic)
+    instead of a generic error.
+    """
+    msg = str(exc)
+    if isinstance(exc, GeoRestrictedError):
+        return ErrorKind.REGION_BLOCKED, msg
+    return _classify_message(msg), msg
+
+
 @dataclass
 class ProbeResult:
     ok: bool
@@ -47,6 +92,8 @@ class ProbeResult:
     title: str | None
     has_maxheight: bool
     availability: str | None
+    error_kind: ErrorKind | None = None
+    error_msg: str | None = None
 
 
 @dataclass
@@ -122,49 +169,22 @@ class TrailerDownloader:
         if self._on_progress and d.get("status") == "finished":
             self._on_progress(self._current_tmdb_id, 100.0, None, 0)
 
-    @staticmethod
-    def _classify(msg: str) -> ErrorKind:
-        m = msg.lower()
-        if (
-            "confirm your age" in m
-            or "inappropriate for some users" in m
-            or "age-restricted" in m
-            or "age restricted" in m
-        ):
-            return ErrorKind.AGE_GATED
-        if "not a bot" in m or ("sign in to confirm" in m and "bot" in m):
-            return ErrorKind.BOT_CHECK
-        if (
-            "not available in your country" in m
-            or "blocked it in your country" in m
-            or "geo" in m
-        ):
-            return ErrorKind.REGION_BLOCKED
-        if "requested format" in m or "no video formats" in m or "no formats" in m:
-            return ErrorKind.NO_FORMAT
-        if (
-            "unavailable" in m
-            or "private" in m
-            or "removed" in m
-            or "deleted" in m
-            or "terminated" in m
-        ):
-            return ErrorKind.UNAVAILABLE
-        return ErrorKind.ERROR
-
     def probe(self, url: str) -> ProbeResult:
         opts = self._build_options(self.config.config_dir)
         opts["skip_download"] = True
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=False)
-        except (DownloadError, ExtractorError):
+        except (DownloadError, ExtractorError) as e:
+            kind, msg = classify_download_error(e)
             return ProbeResult(
                 ok=False,
                 duration=None,
                 title=None,
                 has_maxheight=False,
                 availability="error",
+                error_kind=kind,
+                error_msg=msg,
             )
         is_live = bool(info.get("is_live"))
         formats = info.get("formats", []) or []
@@ -173,8 +193,30 @@ class TrailerDownloader:
             and f.get("vcodec", "none") != "none"
             for f in formats
         )
+        if is_live:
+            return ProbeResult(
+                ok=False,
+                duration=info.get("duration"),
+                title=info.get("title"),
+                has_maxheight=has_max,
+                availability=info.get("availability"),
+                error_kind=ErrorKind.ERROR,
+                error_msg="video is live, cannot download",
+            )
+        if not has_max:
+            return ProbeResult(
+                ok=False,
+                duration=info.get("duration"),
+                title=info.get("title"),
+                has_maxheight=False,
+                availability=info.get("availability"),
+                error_kind=ErrorKind.NO_FORMAT,
+                error_msg=(
+                    f"no format with height <= {self.config.max_height} available"
+                ),
+            )
         return ProbeResult(
-            ok=(not is_live) and has_max,
+            ok=True,
             duration=info.get("duration"),
             title=info.get("title"),
             has_maxheight=has_max,
@@ -187,10 +229,9 @@ class TrailerDownloader:
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=True)
-        except GeoRestrictedError as e:
-            raise DownloadFailed(ErrorKind.REGION_BLOCKED, str(e)) from e
         except (DownloadError, ExtractorError) as e:
-            raise DownloadFailed(self._classify(str(e)), str(e)) from e
+            kind, msg = classify_download_error(e)
+            raise DownloadFailed(kind, msg) from e
         requested = (info or {}).get("requested_downloads")
         if not requested:
             raise DownloadFailed(

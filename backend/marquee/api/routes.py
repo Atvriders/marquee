@@ -226,6 +226,21 @@ def build_router(context) -> APIRouter:
                 result["jellyfin"] = "error"
         return result
 
+    @router.get("/watchdog")
+    def watchdog_last():
+        if context.watchdog is None:
+            raise HTTPException(status_code=503, detail="watchdog not configured")
+        last = context.watchdog.get_last()
+        if last is None:
+            last = context.watchdog.run()
+        return last
+
+    @router.post("/watchdog/run")
+    def watchdog_run():
+        if context.watchdog is None:
+            raise HTTPException(status_code=503, detail="watchdog not configured")
+        return context.watchdog.run()
+
     @router.get("/activity")
     async def activity(request: Request):
         # A thread-safe queue.Queue (see marquee.api.sse.Broadcaster): publish()

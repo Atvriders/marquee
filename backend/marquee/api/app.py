@@ -19,6 +19,7 @@ class AppContext:
     config: object
     broadcaster: object
     static_dir: str | None = None
+    watchdog: object = None
 
 
 def create_app(context: AppContext) -> FastAPI:

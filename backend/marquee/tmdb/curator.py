@@ -36,11 +36,20 @@ def _year_from(date_str: str | None) -> int | None:
         return None
 
 
-def pick_best_trailer(videos: list[dict], language: str) -> TrailerVideo | None:
+_ALLOWED_SITES = ("YouTube", "Vimeo")
+
+
+def rank_trailers(videos: list[dict], language: str) -> list[TrailerVideo]:
+    """Rank every playable (YouTube or Vimeo) video candidate, best first.
+
+    Returns the FULL ranked list — not just the winner — so callers can fall
+    back to the next candidate when the top pick turns out to be dead/DRM'd
+    at download time (spec: trailer candidate fallback).
+    """
     lang2 = language.split("-")[0].lower()
-    youtube = [v for v in videos if v.get("site") == "YouTube" and v.get("key")]
-    if not youtube:
-        return None
+    playable = [v for v in videos if v.get("site") in _ALLOWED_SITES and v.get("key")]
+    if not playable:
+        return []
 
     def sort_key(v: dict) -> tuple:
         return (
@@ -51,16 +60,24 @@ def pick_best_trailer(videos: list[dict], language: str) -> TrailerVideo | None:
             -_published_ts(v.get("published_at", "")),
         )
 
-    best = sorted(youtube, key=sort_key)[0]
-    return TrailerVideo(
-        key=best["key"],
-        site=best.get("site", "YouTube"),
-        type=best.get("type", ""),
-        official=bool(best.get("official", False)),
-        size=int(best.get("size", 0)),
-        iso_639_1=best.get("iso_639_1", ""),
-        published_at=best.get("published_at", ""),
-    )
+    ranked = sorted(playable, key=sort_key)
+    return [
+        TrailerVideo(
+            key=v["key"],
+            site=v.get("site", "YouTube"),
+            type=v.get("type", ""),
+            official=bool(v.get("official", False)),
+            size=int(v.get("size", 0)),
+            iso_639_1=v.get("iso_639_1", ""),
+            published_at=v.get("published_at", ""),
+        )
+        for v in ranked
+    ]
+
+
+def pick_best_trailer(videos: list[dict], language: str) -> TrailerVideo | None:
+    ranked = rank_trailers(videos, language)
+    return ranked[0] if ranked else None
 
 
 def extract_digital_date(
@@ -147,7 +164,8 @@ def discover(
 def enrich(client, cand: MovieCandidate, region: str, language: str) -> EnrichedMovie:
     details = client.movie_details(cand.tmdb_id, language)
     videos = details.get("videos", {}).get("results", [])
-    trailer = pick_best_trailer(videos, language)
+    candidates = rank_trailers(videos, language)
+    trailer = candidates[0] if candidates else None
     release_dates = details.get("release_dates", {}).get("results", [])
     digital_date, digital_date_source = extract_digital_date(release_dates, region)
     genres = [g["name"] for g in details.get("genres", []) if g.get("name")]
@@ -170,4 +188,5 @@ def enrich(client, cand: MovieCandidate, region: str, language: str) -> Enriched
         digital_date_source=digital_date_source,
         youtube_key=trailer.key if trailer else None,
         trailer=trailer,
+        trailer_candidates=candidates,
     )

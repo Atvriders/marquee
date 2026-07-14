@@ -20,12 +20,14 @@ class WrittenMovie:
     nfo_path: str
     poster_path: str | None
     backdrop_path: str | None
+    trailer_extra_path: str | None = None
 
 
 class LibraryWriter:
-    def __init__(self, library_dir: str, client):
+    def __init__(self, library_dir: str, client, trailer_extra: bool = True):
         self.library_dir = library_dir
         self.client = client
+        self.trailer_extra = trailer_extra
 
     @staticmethod
     def sanitize(name: str) -> str:
@@ -99,6 +101,16 @@ class LibraryWriter:
         video_path = os.path.join(folder, f"{name}.{ext}")
         shutil.move(source_video, video_path)
 
+        trailer_extra_path = None
+        if self.trailer_extra:
+            trailers_dir = os.path.join(folder, "trailers")
+            os.makedirs(trailers_dir, exist_ok=True)
+            trailer_extra_path = os.path.join(trailers_dir, f"{name}-trailer.{ext}")
+            try:
+                os.link(video_path, trailer_extra_path)
+            except OSError:
+                shutil.copy2(video_path, trailer_extra_path)
+
         nfo_path = os.path.join(folder, "movie.nfo")
         with open(nfo_path, "w", encoding="utf-8") as fh:
             fh.write(self.render_nfo(m))
@@ -123,6 +135,7 @@ class LibraryWriter:
             nfo_path=nfo_path,
             poster_path=poster_path,
             backdrop_path=backdrop_path,
+            trailer_extra_path=trailer_extra_path,
         )
 
     def delete_movie(self, folder: str) -> None:

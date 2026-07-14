@@ -27,6 +27,15 @@ class Config:
     ytdlp_cookies: str | None = None
     ytdlp_cookies_text: str | None = None  # raw cookies.txt content (materialized to a file)
     ytdlp_proxy: str | None = None
+    trailer_extra: bool = True
+    jellyfin_library_name: str | None = None
+    watchdog_cron: str = "0 * * * *"
+    watchdog_stale_play_days: int = 7
+    trailer_max_candidates: int = 5
+
+
+def _truthy(value: str) -> bool:
+    return value.strip().lower() in ("1", "true", "yes", "on")
 
 
 def load_config(env: Mapping[str, str], overrides: dict | None = None) -> Config:
@@ -66,6 +75,11 @@ def load_config(env: Mapping[str, str], overrides: dict | None = None) -> Config
         ytdlp_cookies=get("YTDLP_COOKIES"),
         ytdlp_cookies_text=get("YTDLP_COOKIES_TEXT"),
         ytdlp_proxy=get("YTDLP_PROXY"),
+        trailer_extra=_truthy(get("TRAILER_EXTRA", "true") or "true"),
+        jellyfin_library_name=get("JELLYFIN_LIBRARY_NAME"),
+        watchdog_cron=get("WATCHDOG_CRON", "0 * * * *"),
+        watchdog_stale_play_days=int(get("WATCHDOG_STALE_PLAY_DAYS", "7")),
+        trailer_max_candidates=int(get("TRAILER_MAX_CANDIDATES", "5")),
     )
 
 

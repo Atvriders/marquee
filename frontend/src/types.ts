@@ -104,3 +104,18 @@ export type ActivityMessage =
       speed: number | null; // bytes/sec (yt-dlp), per SSE contract
       eta: number | null; // seconds remaining, per SSE contract
     };
+
+// GET /api/watchdog, POST /api/watchdog/run — Jellyfin end-to-end health checks.
+export interface WatchdogCheck {
+  id: string;
+  label: string;
+  status: "ok" | "warn" | "fail" | "skip";
+  detail: string;
+  hint?: string;
+}
+
+export interface WatchdogResult {
+  ok: boolean;
+  checks: WatchdogCheck[];
+  checked_at: string; // ISO datetime
+}

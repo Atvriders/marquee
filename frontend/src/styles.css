@@ -170,6 +170,19 @@ h1, h2, h3 { margin: 0; }
 }
 .status-bar button:hover { border-color: var(--bulb); }
 
+/* ---------------------------------------------------------- wd-banner --- */
+.wd-banner {
+  display: flex; align-items: center; justify-content: center; gap: 1ch; flex-wrap: wrap;
+  width: 100%;
+  padding: 0.6rem clamp(1rem, 4vw, 2.5rem);
+  background: var(--ticket); color: #fff2ee;
+  font-family: var(--font-mono); font-size: 0.82rem;
+  text-align: center;
+  box-shadow: 0 2px 10px -4px rgba(0, 0, 0, 0.5);
+}
+.wd-banner a { color: #fff2ee; text-decoration: underline; font-weight: 700; }
+.wd-banner a:hover { opacity: 0.85; }
+
 /* ------------------------------------------------------------ dashboard --- */
 .dashboard-controls {
   display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center;
@@ -357,6 +370,53 @@ h1, h2, h3 { margin: 0; }
 .settings-form input:focus, .settings-form select:focus { outline: 2px solid var(--bulb); outline-offset: 1px; }
 .settings-actions { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
 .settings-message { font-family: var(--font-mono); font-size: 0.8rem; color: var(--reel); }
+
+/* ------------------------------------------------------------- watchdog --- */
+.wd-panel {
+  max-width: 640px; margin-top: 1.25rem;
+  display: grid; gap: 0.85rem;
+  background: var(--sheet); color: var(--ink-sheet);
+  border-radius: var(--radius); padding: 1.1rem 1.25rem;
+  box-shadow: var(--shadow-sheet);
+}
+.wd-panel-header { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+.wd-panel-header button {
+  padding: 0.5rem 1.1rem; border-radius: var(--radius);
+  background: var(--bulb); color: #2a1c05; border: 1px solid transparent;
+  transition: filter 0.15s;
+}
+.wd-panel-header button:hover { filter: brightness(1.08); }
+.wd-panel-header button:disabled { opacity: 0.6; cursor: default; filter: none; }
+.wd-time { font-family: var(--font-mono); font-size: 0.75rem; color: #6d5f52; }
+
+.wd-status { font-family: var(--font-mono); font-size: 0.85rem; color: #6d5f52; margin: 0; }
+.wd-status.wd-error { color: var(--ticket); }
+
+.wd-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; }
+.wd-row {
+  display: flex; gap: 0.65rem; align-items: flex-start;
+  padding: 0.55rem 0.7rem; border-radius: var(--radius);
+  background: rgba(36, 28, 34, 0.05);
+  border-left: 3px solid var(--ink-dim);
+}
+.wd-icon { font-family: var(--font-mono); font-size: 0.9rem; line-height: 1.4; flex: none; width: 1.2em; text-align: center; }
+.wd-row-body { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+.wd-label {
+  font-family: var(--font-display); text-transform: uppercase; letter-spacing: 0.04em;
+  font-weight: 600; font-size: 0.85rem; color: var(--ink-sheet);
+}
+.wd-detail { font-family: var(--font-mono); font-size: 0.78rem; color: #6d5f52; }
+.wd-hint { font-family: var(--font-body); font-size: 0.78rem; color: #6d5f52; font-style: italic; }
+
+.wd-ok { border-left-color: var(--reel); }
+.wd-ok .wd-icon { color: var(--reel); }
+.wd-warn { border-left-color: var(--bulb); }
+.wd-warn .wd-icon { color: var(--bulb); }
+.wd-fail { border-left-color: var(--ticket); }
+.wd-fail .wd-icon { color: var(--ticket); }
+.wd-fail .wd-hint { color: var(--ticket); font-style: normal; font-weight: 600; }
+.wd-skip { border-left-color: var(--ink-dim); opacity: 0.75; }
+.wd-skip .wd-icon { color: var(--ink-dim); }
 
 /* ---------------------------------------------------- buttons (generic) --- */
 .app-main button, .settings-actions button {

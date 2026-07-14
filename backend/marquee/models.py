@@ -20,6 +20,7 @@ class ErrorKind(str, Enum):
     UNAVAILABLE = "unavailable"
     NO_FORMAT = "no_format"
     NO_TRAILER = "no_trailer"
+    DRM = "drm"
     ERROR = "error"
 
 
@@ -47,8 +48,14 @@ class TrailerVideo:
     published_at: str
 
     @property
-    def youtube_url(self) -> str:
+    def url(self) -> str:
+        if self.site == "Vimeo":
+            return f"https://vimeo.com/{self.key}"
         return f"https://www.youtube.com/watch?v={self.key}"
+
+    @property
+    def youtube_url(self) -> str:
+        return self.url
 
 
 @dataclass
@@ -70,6 +77,7 @@ class EnrichedMovie:
     digital_date_source: str = "none"
     youtube_key: str | None = None
     trailer: TrailerVideo | None = None
+    trailer_candidates: list[TrailerVideo] = field(default_factory=list)
 
 
 @dataclass

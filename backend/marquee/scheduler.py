@@ -10,11 +10,12 @@ from marquee.models import Status
 
 
 class Scheduler:
-    def __init__(self, pipeline, reaper, store, config):
+    def __init__(self, pipeline, reaper, store, config, watchdog=None):
         self._pipeline = pipeline
         self._reaper = reaper
         self._store = store
         self._config = config
+        self._watchdog = watchdog
         self._tz = ZoneInfo(config.tz)
         self._sched = BackgroundScheduler(timezone=self._tz)
         self._lock = threading.Lock()
@@ -37,6 +38,15 @@ class Scheduler:
             coalesce=True,
             replace_existing=True,
         )
+        if self._watchdog is not None:
+            self._sched.add_job(
+                self.trigger_watchdog,
+                CronTrigger.from_crontab(self._config.watchdog_cron, timezone=self._tz),
+                id="watchdog",
+                max_instances=1,
+                coalesce=True,
+                replace_existing=True,
+            )
         self._sched.start()
 
     def stop(self) -> None:
@@ -63,6 +73,19 @@ class Scheduler:
             movies = self._store.list_movies([Status.READY])
             for m in self._reaper.find_expired(movies):
                 self._reaper.expire(m)
+        finally:
+            self._running = False
+            self._lock.release()
+
+    def trigger_watchdog(self) -> None:
+        if self._watchdog is None:
+            return
+        if not self._lock.acquire(blocking=False):
+            self._store.log("warn", "skip", "watchdog skipped: run already in progress")
+            return
+        try:
+            self._running = True
+            self._watchdog.run()
         finally:
             self._running = False
             self._lock.release()

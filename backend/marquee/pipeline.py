@@ -103,10 +103,41 @@ class RefreshPipeline:
         self.config = config
         self.broadcaster = broadcaster
 
+    def reconcile(self) -> int:
+        """Marquee trusts its DB over the disk: if a READY movie's file has
+        been deleted out from under it (e.g. manual cleanup, volume wipe),
+        the DB would otherwise keep reporting it ready forever and never
+        re-download it. Walk all READY movies and re-queue any whose
+        file_path no longer exists on disk so the next run's download pass
+        picks it back up. Returns the number of movies reconciled."""
+        reconciled = 0
+        for movie in self.store.list_movies([Status.READY]):
+            if movie.file_path and os.path.isfile(movie.file_path):
+                continue
+            self.store.set_status(
+                movie.tmdb_id,
+                Status.QUEUED,
+                file_path=None,
+                folder=None,
+                jellyfin_item_id=None,
+            )
+            emit_log(
+                self.store,
+                self.broadcaster,
+                "warn",
+                "library_file_missing",
+                f"library file missing, will re-download: {movie.title}",
+                movie.tmdb_id,
+            )
+            reconciled += 1
+        return reconciled
+
     def run(self) -> RunSummary:
         now = datetime.now(tz=UTC)
         temp_dir = os.path.join(self.config.config_dir, "tmp")
         os.makedirs(temp_dir, exist_ok=True)
+
+        self.reconcile()
 
         candidates = discover(
             self.client,
@@ -218,37 +249,93 @@ class RefreshPipeline:
                 enriched.tmdb_id,
             )
 
-            # Pre-validate the trailer before spending a full download (spec §4.5/§7).
-            probe_res = self.downloader.probe(enriched.trailer.youtube_url)
-            if not probe_res.ok:
+            # TMDB lists many videos per movie; a single "best" pick can be
+            # DRM'd, removed, or otherwise dead. Rank ALL candidates and try
+            # them in order until one actually probes+downloads (spec:
+            # trailer candidate fallback).
+            trailer_candidates = enriched.trailer_candidates[
+                : self.config.trailer_max_candidates
+            ]
+            if not trailer_candidates and enriched.trailer:
+                trailer_candidates = [enriched.trailer]
+
+            first_error_kind: ErrorKind | None = None
+            first_error_msg: str | None = None
+            succeeded = False
+
+            for candidate in trailer_candidates:
+                # Pre-validate the trailer before spending a full download
+                # (spec §4.5/§7).
+                probe_res = self.downloader.probe(candidate.url)
+                if not probe_res.ok:
+                    kind = probe_res.error_kind or ErrorKind.NO_FORMAT
+                    msg = (
+                        probe_res.error_msg
+                        or "pre-validate failed: no suitable format"
+                    )
+                    if first_error_kind is None:
+                        first_error_kind, first_error_msg = kind, msg
+                    emit_log(
+                        self.store,
+                        self.broadcaster,
+                        "warn",
+                        "trailer_rejected",
+                        f"{enriched.title}: candidate {candidate.key} rejected "
+                        f"({kind.value}): {msg}",
+                        enriched.tmdb_id,
+                    )
+                    continue
+
+                try:
+                    result = self.downloader.download(
+                        candidate.url, temp_dir, enriched.tmdb_id
+                    )
+                except DownloadFailed as e:
+                    if first_error_kind is None:
+                        first_error_kind, first_error_msg = e.kind, e.message
+                    emit_log(
+                        self.store,
+                        self.broadcaster,
+                        "warn",
+                        "trailer_rejected",
+                        f"{enriched.title}: candidate {candidate.key} rejected "
+                        f"({e.kind.value}): {e.message}",
+                        enriched.tmdb_id,
+                    )
+                    continue
+
+                written = self.writer.write_movie(enriched, result.path)
                 self.store.set_status(
                     enriched.tmdb_id,
-                    Status.FAILED,
-                    error_kind=ErrorKind.NO_FORMAT.value,
-                    error_msg="pre-validate failed: no suitable format",
+                    Status.READY,
+                    file_path=written.video_path,
+                    folder=written.folder,
+                    youtube_key=candidate.key,
                     last_checked=now,
                 )
                 emit_log(
                     self.store,
                     self.broadcaster,
-                    "error",
-                    "no_format",
-                    f"Pre-validate failed for {enriched.title}",
+                    "info",
+                    "ready",
+                    f"Downloaded {enriched.title}",
                     enriched.tmdb_id,
                 )
-                summary.failed += 1
-                continue
+                summary.downloaded += 1
+                newly_written.append(enriched.tmdb_id)
+                succeeded = True
+                break
 
-            try:
-                result = self.downloader.download(
-                    enriched.trailer.youtube_url, temp_dir, enriched.tmdb_id
+            if not succeeded:
+                final_kind = first_error_kind or ErrorKind.NO_FORMAT
+                final_msg = (
+                    first_error_msg or "pre-validate failed: no suitable format"
                 )
-            except DownloadFailed as e:
                 self.store.set_status(
                     enriched.tmdb_id,
                     Status.FAILED,
-                    error_kind=e.kind.value,
-                    error_msg=e.message,
+                    error_kind=final_kind.value,
+                    error_msg=final_msg,
                     last_checked=now,
                 )
                 emit_log(
@@ -256,30 +343,11 @@ class RefreshPipeline:
                     self.broadcaster,
                     "error",
                     "download_failed",
-                    f"{enriched.title}: {e.message}",
+                    f"{enriched.title}: all trailer candidates failed "
+                    f"({final_kind.value}): {final_msg}",
                     enriched.tmdb_id,
                 )
                 summary.failed += 1
-                continue
-
-            written = self.writer.write_movie(enriched, result.path)
-            self.store.set_status(
-                enriched.tmdb_id,
-                Status.READY,
-                file_path=written.video_path,
-                folder=written.folder,
-                last_checked=now,
-            )
-            emit_log(
-                self.store,
-                self.broadcaster,
-                "info",
-                "ready",
-                f"Downloaded {enriched.title}",
-                enriched.tmdb_id,
-            )
-            summary.downloaded += 1
-            newly_written.append(enriched.tmdb_id)
 
         if self.jellyfin is not None:
             self.jellyfin.refresh_library()

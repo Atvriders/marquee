@@ -80,3 +80,25 @@ def test_ytdlp_cookies_text_from_env():
     c = load_config({"TMDB_TOKEN": "t", "YTDLP_COOKIES_TEXT": "# Netscape HTTP Cookie File\nx"})
     assert c.ytdlp_cookies_text == "# Netscape HTTP Cookie File\nx"
     assert load_config({"TMDB_TOKEN": "t"}).ytdlp_cookies_text is None
+
+
+def test_trailer_extra_defaults_true_and_parses_truthy_strings():
+    assert load_config({"TMDB_TOKEN": "t"}).trailer_extra is True
+    assert load_config({"TMDB_TOKEN": "t", "TRAILER_EXTRA": "false"}).trailer_extra is False
+    assert load_config({"TMDB_TOKEN": "t", "TRAILER_EXTRA": "0"}).trailer_extra is False
+    assert load_config({"TMDB_TOKEN": "t", "TRAILER_EXTRA": "yes"}).trailer_extra is True
+    assert load_config({"TMDB_TOKEN": "t", "TRAILER_EXTRA": ""}).trailer_extra is True
+
+
+def test_apply_setting_overrides_coerces_trailer_extra_bool():
+    from marquee.config import apply_setting_overrides
+
+    base = load_config({"TMDB_TOKEN": "tok"})
+    out = apply_setting_overrides(base, {"trailer_extra": "false"})
+    assert out.trailer_extra is False
+
+
+def test_trailer_max_candidates_defaults_and_env_override():
+    assert load_config({"TMDB_TOKEN": "t"}).trailer_max_candidates == 5
+    c = load_config({"TMDB_TOKEN": "t", "TRAILER_MAX_CANDIDATES": "3"})
+    assert c.trailer_max_candidates == 3

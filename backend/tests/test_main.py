@@ -42,6 +42,7 @@ def fake_components(pipeline=None, reaper=None, store=None):
         scheduler=object(),
         broadcaster=object(),
         config=object(),
+        watchdog=object(),
     )
 
 

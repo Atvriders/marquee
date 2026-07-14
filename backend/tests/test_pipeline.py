@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 from marquee.config import Config
 from marquee.store import Store
-from marquee.models import EnrichedMovie, Movie, MovieCandidate, Status
+from marquee.models import EnrichedMovie, Movie, MovieCandidate, Status, TrailerVideo
 from marquee.downloader import DownloadResult, DownloadFailed, ProbeResult
 from marquee.models import ErrorKind
 from marquee.library.reaper import compute_expires_at
@@ -230,13 +230,12 @@ def test_run_no_trailer_marks_failed_preserves_jellyfin_item_id(tmp_path, monkey
     dl = FakeDownloader()
     p, store, jf = build(tmp_path, dl, monkeypatch, [cand()], [make_enriched()])
     p.run()
-    store.set_status(1, Status.READY, jellyfin_item_id="jf-1")
+    # Not READY (so reconcile()'s file-existence self-heal at the top of the
+    # next run() doesn't touch it) -> the existing movie is no longer a
+    # READY-with-file-on-disk case -> falls through to the normal FAILED
+    # path, which must still preserve jellyfin_item_id.
+    store.set_status(1, Status.DOWNLOADING, jellyfin_item_id="jf-1")
 
-    # Re-enrich with no trailer, but the existing movie is no longer a
-    # READY-with-file-on-disk case (file missing) -> falls through to the
-    # normal FAILED path, which must still preserve jellyfin_item_id.
-    m = store.get_movie(1)
-    os.remove(m.file_path)
     monkeypatch.setattr(pipeline_mod, "discover", lambda *a, **k: [cand()])
     it = iter([make_enriched(youtube_key=None, trailer=None)])
     monkeypatch.setattr(pipeline_mod, "enrich", lambda *a, **k: next(it))
@@ -266,8 +265,52 @@ def test_run_probe_not_ok_marks_failed_and_skips_download(tmp_path, monkeypatch)
     assert summary.downloaded == 0
     m = store.get_movie(1)
     assert m.status == Status.FAILED
+    # FakeDownloader.probe() (unlike the real one) leaves error_kind/msg unset,
+    # so the pipeline must fall back to NO_FORMAT / the generic message.
     assert m.error_kind == ErrorKind.NO_FORMAT.value
+    assert m.error_msg == "pre-validate failed: no suitable format"
     assert dl.probe_calls == ["https://www.youtube.com/watch?v=YT1"]
+    assert dl.calls == []  # download() NOT called
+
+
+class AgeGatedProbeDownloader:
+    """A downloader whose probe() reports the REAL classified failure reason
+    (as the real TrailerDownloader now does), to prove the pipeline persists
+    it instead of the generic no_format placeholder."""
+
+    def __init__(self):
+        self.calls = []
+        self.probe_calls = []
+
+    def probe(self, url):
+        self.probe_calls.append(url)
+        return ProbeResult(
+            ok=False,
+            duration=None,
+            title=None,
+            has_maxheight=False,
+            availability="needs_auth",
+            error_kind=ErrorKind.AGE_GATED,
+            error_msg="Sign in to confirm your age. This video may be inappropriate for some users.",
+        )
+
+    def download(self, url, dest_dir, tmdb_id):
+        self.calls.append((url, tmdb_id))
+        raise AssertionError("download() should not be called after a failed probe")
+
+
+def test_run_probe_not_ok_persists_real_error_kind_and_message(tmp_path, monkeypatch):
+    dl = AgeGatedProbeDownloader()
+    p, store, jf = build(tmp_path, dl, monkeypatch, [cand()], [make_enriched()])
+    summary = p.run()
+    assert summary.failed == 1
+    assert summary.downloaded == 0
+    m = store.get_movie(1)
+    assert m.status == Status.FAILED
+    assert m.error_kind == ErrorKind.AGE_GATED.value
+    assert m.error_msg == (
+        "Sign in to confirm your age. This video may be inappropriate for some users."
+    )
     assert dl.calls == []  # download() NOT called
 
 
@@ -394,3 +437,266 @@ def _movie_row(tmdb_id=1, status=Status.QUEUED, **over):
     )
     base.update(over)
     return Movie(**base)
+
+
+# ----- self-heal: reconcile() re-queues READY movies with missing files -----
+
+
+def test_reconcile_requeues_ready_movie_with_missing_file(tmp_path, monkeypatch):
+    dl = FakeDownloader()
+    p, store, jf = build(tmp_path, dl, monkeypatch, [], [])
+    ready_path = tmp_path / "lib" / "1" / "movie.mkv"
+    os.makedirs(ready_path.parent, exist_ok=True)
+    open(ready_path, "wb").close()
+    store.upsert_movie(
+        _movie_row(
+            tmdb_id=1,
+            status=Status.READY,
+            file_path=str(ready_path),
+            folder=str(ready_path.parent),
+            jellyfin_item_id="jf-1",
+        )
+    )
+    os.remove(ready_path)  # simulate the library file vanishing off disk
+
+    count = p.reconcile()
+
+    assert count == 1
+    m = store.get_movie(1)
+    assert m.status == Status.QUEUED
+    assert m.file_path is None
+    assert m.folder is None
+    assert m.jellyfin_item_id is None
+
+
+def test_reconcile_leaves_ready_movie_with_existing_file_alone(tmp_path, monkeypatch):
+    dl = FakeDownloader()
+    p, store, jf = build(tmp_path, dl, monkeypatch, [], [])
+    ready_path = tmp_path / "lib" / "1" / "movie.mkv"
+    os.makedirs(ready_path.parent, exist_ok=True)
+    open(ready_path, "wb").close()
+    store.upsert_movie(
+        _movie_row(
+            tmdb_id=1,
+            status=Status.READY,
+            file_path=str(ready_path),
+            folder=str(ready_path.parent),
+            jellyfin_item_id="jf-1",
+        )
+    )
+
+    count = p.reconcile()
+
+    assert count == 0
+    m = store.get_movie(1)
+    assert m.status == Status.READY
+    assert m.file_path == str(ready_path)
+    assert m.jellyfin_item_id == "jf-1"
+
+
+def test_run_self_heals_missing_library_file_and_redownloads(tmp_path, monkeypatch):
+    # A READY movie whose file was deleted off disk must be re-queued and
+    # re-downloaded by run() (self-heal happens at the start of the run,
+    # before discovery).
+    dl = FakeDownloader()
+    p, store, jf = build(tmp_path, dl, monkeypatch, [cand(1)], [make_enriched(tmdb_id=1)])
+    ready_path = tmp_path / "lib" / "1" / "movie.mkv"
+    os.makedirs(ready_path.parent, exist_ok=True)
+    open(ready_path, "wb").close()
+    store.upsert_movie(
+        _movie_row(
+            tmdb_id=1,
+            status=Status.READY,
+            file_path=str(ready_path),
+            folder=str(ready_path.parent),
+            jellyfin_item_id="jf-old",
+        )
+    )
+    os.remove(ready_path)
+
+    summary = p.run()
+
+    assert summary.downloaded == 1
+    m = store.get_movie(1)
+    assert m.status == Status.READY
+    assert m.file_path and os.path.exists(m.file_path)
+    assert dl.calls == [("https://www.youtube.com/watch?v=YT1", 1)]
+
+
+# ----- trailer candidate fallback (fixes DRM/dead-video failures) -----
+
+
+def _candidate(key, size=1080, published="2026-01-01"):
+    return TrailerVideo(
+        key=key, site="YouTube", type="Trailer", official=True,
+        size=size, iso_639_1="en", published_at=published,
+    )
+
+
+class ScriptedDownloader:
+    """A downloader whose probe()/download() outcome is driven per-URL by a
+    dict of {key: "drm" | "download_fail" | "ok"}, so tests can simulate the
+    real Toy Story 5 scenario: first candidate probes as DRM-rejected,
+    second candidate probes fine and downloads successfully."""
+
+    def __init__(self, outcomes: dict[str, str]):
+        self.outcomes = outcomes
+        self.probe_calls: list[str] = []
+        self.calls: list[tuple[str, int]] = []
+
+    def _key_for(self, url: str) -> str:
+        return url.rsplit("=", 1)[-1]
+
+    def probe(self, url):
+        self.probe_calls.append(url)
+        outcome = self.outcomes.get(self._key_for(url), "ok")
+        if outcome == "drm":
+            return ProbeResult(
+                ok=False, duration=None, title=None, has_maxheight=False,
+                availability="error", error_kind=ErrorKind.DRM,
+                error_msg="This video is DRM protected",
+            )
+        if outcome == "no_format":
+            return ProbeResult(
+                ok=False, duration=None, title=None, has_maxheight=False,
+                availability="error", error_kind=ErrorKind.NO_FORMAT,
+                error_msg="no format with height <= 1080 available",
+            )
+        return ProbeResult(ok=True, duration=90, title="M", has_maxheight=True, availability="public")
+
+    def download(self, url, dest_dir, tmdb_id):
+        self.calls.append((url, tmdb_id))
+        key = self._key_for(url)
+        if self.outcomes.get(key) == "download_fail":
+            raise DownloadFailed(ErrorKind.UNAVAILABLE, "video removed")
+        os.makedirs(dest_dir, exist_ok=True)
+        p = os.path.join(dest_dir, f"{tmdb_id}.mkv")
+        open(p, "wb").close()
+        return DownloadResult(path=p, title="M", duration=90, ext="mkv", video_id=key)
+
+
+def test_run_first_candidate_drm_second_succeeds(tmp_path, monkeypatch):
+    # The verified real-world bug: TMDB's top pick ("Final Trailer") is
+    # DRM-protected and yt-dlp rejects it, but a lower-ranked candidate
+    # ("Official Trailer") downloads fine. The movie must still end READY,
+    # using the SECOND candidate's key, with a warn logged for the first.
+    c1 = _candidate("DRM1")
+    c2 = _candidate("OK2", size=720)
+    dl = ScriptedDownloader({"DRM1": "drm"})
+    p, store, jf = build(
+        tmp_path, dl, monkeypatch, [cand()],
+        [make_enriched(trailer=c1, youtube_key=c1.key, trailer_candidates=[c1, c2])],
+    )
+
+    summary = p.run()
+
+    assert summary.downloaded == 1
+    assert summary.failed == 0
+    m = store.get_movie(1)
+    assert m.status == Status.READY
+    assert m.youtube_key == "OK2"  # the candidate that actually got downloaded
+    assert m.file_path and os.path.exists(m.file_path)
+    assert dl.probe_calls == [c1.url, c2.url]
+    assert dl.calls == [(c2.url, 1)]  # download() only attempted for the working candidate
+
+    logs = store.recent_activity()
+    warns = [row for row in logs if row["event"] == "trailer_rejected"]
+    assert len(warns) == 1
+    assert warns[0]["level"] == "warn"
+    assert "DRM1" in warns[0]["message"]
+    assert "drm" in warns[0]["message"]
+
+
+def test_run_all_candidates_fail_uses_first_candidate_kind(tmp_path, monkeypatch):
+    c1 = _candidate("DRM1")
+    c2 = _candidate("BAD2", size=720)
+    dl = ScriptedDownloader({"DRM1": "drm", "BAD2": "no_format"})
+    p, store, jf = build(
+        tmp_path, dl, monkeypatch, [cand()],
+        [make_enriched(trailer=c1, youtube_key=c1.key, trailer_candidates=[c1, c2])],
+    )
+
+    summary = p.run()
+
+    assert summary.downloaded == 0
+    assert summary.failed == 1
+    m = store.get_movie(1)
+    assert m.status == Status.FAILED
+    # the FIRST candidate's error is the one persisted, as most representative
+    assert m.error_kind == ErrorKind.DRM.value
+    assert m.error_msg == "This video is DRM protected"
+    assert dl.probe_calls == [c1.url, c2.url]
+    assert dl.calls == []  # neither probe succeeded, so download() never called
+
+    logs = store.recent_activity()
+    warns = [row for row in logs if row["event"] == "trailer_rejected"]
+    assert len(warns) == 2
+
+
+def test_run_candidate_download_failure_falls_through_to_next(tmp_path, monkeypatch):
+    # Same class of bug as "The Furious": the top candidate probes fine but
+    # its download blows up (e.g. the video got pulled between probe and
+    # download); the next candidate must still be tried.
+    c1 = _candidate("REMOVED1")
+    c2 = _candidate("OK2", size=720)
+    dl = ScriptedDownloader({"REMOVED1": "download_fail"})
+    p, store, jf = build(
+        tmp_path, dl, monkeypatch, [cand()],
+        [make_enriched(trailer=c1, youtube_key=c1.key, trailer_candidates=[c1, c2])],
+    )
+
+    summary = p.run()
+
+    assert summary.downloaded == 1
+    m = store.get_movie(1)
+    assert m.status == Status.READY
+    assert m.youtube_key == "OK2"
+    assert dl.calls == [(c1.url, 1), (c2.url, 1)]
+
+
+def test_run_respects_trailer_max_candidates(tmp_path, monkeypatch):
+    # Only the first `trailer_max_candidates` are probed, even if more exist
+    # (Toy Story 5 had 83 videos — don't burn time probing all of them).
+    candidates = [_candidate(f"C{i}", size=1080 - i) for i in range(10)]
+    dl = ScriptedDownloader({f"C{i}": "drm" for i in range(9)})  # only C9 works
+    cfg_enriched = make_enriched(
+        trailer=candidates[0], youtube_key=candidates[0].key, trailer_candidates=candidates
+    )
+    p, store, jf = build(tmp_path, dl, monkeypatch, [cand()], [cfg_enriched])
+    p.config.trailer_max_candidates = 3
+
+    summary = p.run()
+
+    assert summary.failed == 1
+    assert summary.downloaded == 0
+    assert len(dl.probe_calls) == 3  # capped, never reaches the working C9
+
+
+def test_run_leaves_ready_movie_with_existing_file_alone(tmp_path, monkeypatch):
+    # A READY movie whose file still exists must not be touched or
+    # re-downloaded by run()'s self-heal pass.
+    dl = FakeDownloader()
+    p, store, jf = build(tmp_path, dl, monkeypatch, [cand(1)], [make_enriched(tmdb_id=1)])
+    ready_path = tmp_path / "lib" / "1" / "movie.mkv"
+    os.makedirs(ready_path.parent, exist_ok=True)
+    open(ready_path, "wb").close()
+    store.upsert_movie(
+        _movie_row(
+            tmdb_id=1,
+            status=Status.READY,
+            file_path=str(ready_path),
+            folder=str(ready_path.parent),
+            youtube_key="YT1",
+            jellyfin_item_id="jf-old",
+        )
+    )
+
+    summary = p.run()
+
+    assert summary.skipped == 1
+    assert summary.downloaded == 0
+    assert dl.calls == []
+    m = store.get_movie(1)
+    assert m.status == Status.READY
+    assert m.file_path == str(ready_path)
+    assert m.jellyfin_item_id == "jf-old"

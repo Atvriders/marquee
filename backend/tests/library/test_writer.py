@@ -82,6 +82,44 @@ def test_write_movie(tmp_path):
 
 
 @respx.mock
+def test_write_movie_trailer_extra_hardlink(tmp_path):
+    respx.get("https://image.tmdb.org/t/p/w500/p.jpg").mock(
+        return_value=httpx.Response(200, content=b"POSTERBYTES")
+    )
+    respx.get("https://image.tmdb.org/t/p/w1280/b.jpg").mock(
+        return_value=httpx.Response(200, content=b"BACKBYTES")
+    )
+    src = tmp_path / "raw.mkv"
+    src.write_bytes(b"VIDEO")
+    w = LibraryWriter(str(tmp_path / "lib"), FakeClient(), trailer_extra=True)
+    written = w.write_movie(make_movie(), str(src))
+    folder_base = "Dune Part Three (2026) [tmdbid-1234567]"
+    expected_path = os.path.join(
+        written.folder, "trailers", f"{folder_base}-trailer.mkv"
+    )
+    assert written.trailer_extra_path == expected_path
+    assert os.path.isfile(expected_path)
+    assert os.stat(expected_path).st_ino == os.stat(written.video_path).st_ino
+    assert open(expected_path, "rb").read() == b"VIDEO"
+
+
+@respx.mock
+def test_write_movie_trailer_extra_disabled(tmp_path):
+    respx.get("https://image.tmdb.org/t/p/w500/p.jpg").mock(
+        return_value=httpx.Response(200, content=b"POSTERBYTES")
+    )
+    respx.get("https://image.tmdb.org/t/p/w1280/b.jpg").mock(
+        return_value=httpx.Response(200, content=b"BACKBYTES")
+    )
+    src = tmp_path / "raw.mkv"
+    src.write_bytes(b"VIDEO")
+    w = LibraryWriter(str(tmp_path / "lib"), FakeClient(), trailer_extra=False)
+    written = w.write_movie(make_movie(), str(src))
+    assert written.trailer_extra_path is None
+    assert not os.path.isdir(os.path.join(written.folder, "trailers"))
+
+
+@respx.mock
 def test_write_movie_no_backdrop(tmp_path):
     respx.get("https://image.tmdb.org/t/p/w500/p.jpg").mock(
         return_value=httpx.Response(200, content=b"P")

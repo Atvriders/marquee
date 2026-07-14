@@ -15,6 +15,7 @@ vi.mock("./api", () => ({
     }),
     getMovies: vi.fn().mockResolvedValue([]),
     getConnections: vi.fn().mockResolvedValue({ tmdb: "ok", jellyfin: "not_configured" }),
+    getWatchdog: vi.fn().mockResolvedValue({ ok: true, checks: [], checked_at: "2026-07-13T00:00:00Z" }),
     activityUrl: () => "/api/activity",
   },
 }));

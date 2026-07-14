@@ -1,4 +1,4 @@
-import type { Config, Connections, Movie, StatusSummary } from "./types";
+import type { Config, Connections, Movie, StatusSummary, WatchdogResult } from "./types";
 
 const BASE = "/api";
 
@@ -35,4 +35,6 @@ export const api = {
   updateYtdlp: () => req<{ version: string }>("/ytdlp/update", { method: "POST" }),
   testJellyfin: () => req<{ ok: boolean }>("/jellyfin/test", { method: "POST" }),
   activityUrl: () => `${BASE}/activity`,
+  getWatchdog: () => req<WatchdogResult>("/watchdog"),
+  runWatchdog: () => req<WatchdogResult>("/watchdog/run", { method: "POST" }),
 };

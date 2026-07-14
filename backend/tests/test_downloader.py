@@ -127,6 +127,7 @@ def test_download_missing_requested_downloads(monkeypatch, tmp_path):
         ),
         ("Video unavailable. This video is private", ErrorKind.UNAVAILABLE),
         ("Requested format is not available", ErrorKind.NO_FORMAT),
+        ("This video is DRM protected", ErrorKind.DRM),
         ("Some other weird error", ErrorKind.ERROR),
     ],
 )
@@ -189,6 +190,112 @@ def test_probe_ok(monkeypatch, tmp_path):
     assert res.availability == "public"
     _, kwargs = fake.extract_info.call_args
     assert kwargs["download"] is False
+
+
+def test_probe_no_format_reports_no_format_kind(monkeypatch, tmp_path):
+    cfg = make_config(tmp_path, max_height=480)
+    dl = TrailerDownloader(cfg)
+    fake = _fake_ydl(
+        return_value={
+            "id": "abc",
+            "title": "T",
+            "duration": 60,
+            "is_live": False,
+            "availability": "public",
+            "formats": [{"height": 1080, "vcodec": "vp9"}],
+        }
+    )
+    monkeypatch.setattr(
+        "marquee.downloader.yt_dlp.YoutubeDL", MagicMock(return_value=fake)
+    )
+    res = dl.probe("https://youtu.be/abc")
+    assert res.ok is False
+    assert res.has_maxheight is False
+    assert res.error_kind == ErrorKind.NO_FORMAT
+    assert res.error_msg is not None and "480" in res.error_msg
+
+
+@pytest.mark.parametrize(
+    "msg,kind",
+    [
+        ("Sign in to confirm your age. This video may be inappropriate for some users.", ErrorKind.AGE_GATED),
+        ("Video unavailable. This video is private", ErrorKind.UNAVAILABLE),
+        ("ERROR: Sign in to confirm you're not a bot", ErrorKind.BOT_CHECK),
+        ("This video is DRM protected", ErrorKind.DRM),
+    ],
+)
+def test_probe_classifies_download_error(monkeypatch, tmp_path, msg, kind):
+    from yt_dlp.utils import DownloadError
+
+    cfg = make_config(tmp_path)
+    dl = TrailerDownloader(cfg)
+    fake = MagicMock()
+    fake.__enter__.return_value = fake
+    fake.__exit__.return_value = False
+    fake.extract_info.side_effect = DownloadError(msg)
+    monkeypatch.setattr(
+        "marquee.downloader.yt_dlp.YoutubeDL", MagicMock(return_value=fake)
+    )
+    res = dl.probe("u")
+    assert res.ok is False
+    assert res.error_kind == kind
+    assert res.error_msg == msg
+
+
+def test_probe_classifies_georestricted(monkeypatch, tmp_path):
+    from yt_dlp.utils import GeoRestrictedError
+
+    cfg = make_config(tmp_path)
+    dl = TrailerDownloader(cfg)
+    fake = MagicMock()
+    fake.__enter__.return_value = fake
+    fake.__exit__.return_value = False
+    fake.extract_info.side_effect = GeoRestrictedError("not available in your country")
+    monkeypatch.setattr(
+        "marquee.downloader.yt_dlp.YoutubeDL", MagicMock(return_value=fake)
+    )
+    res = dl.probe("u")
+    assert res.ok is False
+    assert res.error_kind == ErrorKind.REGION_BLOCKED
+    assert res.error_msg == "not available in your country"
+
+
+def test_classify_download_error_drm(monkeypatch, tmp_path):
+    # Real-world failure: Toy Story 5's "Final Trailer" (tmdb 1084244) is
+    # rejected by yt-dlp with exactly this message.
+    from yt_dlp.utils import DownloadError
+
+    from marquee.downloader import classify_download_error
+
+    exc = DownloadError("This video is DRM protected")
+    kind, msg = classify_download_error(exc)
+    assert kind == ErrorKind.DRM
+    assert msg == "This video is DRM protected"
+
+
+def test_classify_download_error_shared_by_download_and_probe(monkeypatch, tmp_path):
+    # download() and probe() must agree: same exception -> same (kind, msg).
+    from yt_dlp.utils import DownloadError
+
+    from marquee.downloader import classify_download_error
+
+    exc = DownloadError("Sign in to confirm you're not a bot")
+    kind, msg = classify_download_error(exc)
+    assert kind == ErrorKind.BOT_CHECK
+    assert msg == "Sign in to confirm you're not a bot"
+
+    cfg = make_config(tmp_path)
+    dl = TrailerDownloader(cfg)
+    fake = MagicMock()
+    fake.__enter__.return_value = fake
+    fake.__exit__.return_value = False
+    fake.extract_info.side_effect = exc
+    monkeypatch.setattr(
+        "marquee.downloader.yt_dlp.YoutubeDL", MagicMock(return_value=fake)
+    )
+    with pytest.raises(DownloadFailed) as ei:
+        dl.download("u", str(tmp_path), 1)
+    assert (ei.value.kind, ei.value.message) == (kind, msg)
 
 
 def test_probe_live_not_ok(monkeypatch, tmp_path):

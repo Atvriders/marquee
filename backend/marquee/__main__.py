@@ -14,6 +14,7 @@ from marquee.library.reaper import Reaper
 from marquee.jellyfin import JellyfinClient
 from marquee.pipeline import RefreshPipeline
 from marquee.scheduler import Scheduler
+from marquee.watchdog import Watchdog
 from marquee.api.sse import Broadcaster
 from marquee.api.app import AppContext, create_app
 from marquee.models import Status
@@ -33,6 +34,7 @@ class Components:
     scheduler: object
     broadcaster: object
     config: object
+    watchdog: object
 
 
 def build_components(config: Config) -> Components:
@@ -58,7 +60,7 @@ def build_components(config: Config) -> Components:
             {"type": "progress", "tmdb_id": tmdb_id, "pct": pct, "speed": speed, "eta": eta}
         ),
     )
-    writer = LibraryWriter(config.library_dir, client)
+    writer = LibraryWriter(config.library_dir, client, trailer_extra=config.trailer_extra)
     jellyfin = None
     if config.jellyfin_url and config.jellyfin_api_key:
         jellyfin = JellyfinClient(
@@ -74,11 +76,12 @@ def build_components(config: Config) -> Components:
     pipeline = RefreshPipeline(
         client, downloader, writer, reaper, jellyfin, store, config, broadcaster
     )
-    scheduler = Scheduler(pipeline, reaper, store, config)
+    watchdog = Watchdog(store, jellyfin, config)
+    scheduler = Scheduler(pipeline, reaper, store, config, watchdog)
     return Components(
         store=store, client=client, downloader=downloader, writer=writer,
         jellyfin=jellyfin, reaper=reaper, pipeline=pipeline, scheduler=scheduler,
-        broadcaster=broadcaster, config=config,
+        broadcaster=broadcaster, config=config, watchdog=watchdog,
     )
 
 
@@ -129,6 +132,7 @@ def cmd_serve(config: Config) -> None:
         config=config,
         broadcaster=comps.broadcaster,
         static_dir=static_dir if os.path.isdir(static_dir) else None,
+        watchdog=comps.watchdog,
     )
     app = create_app(context)
     port = int(os.environ.get("PORT", str(DEFAULT_PORT)))
