@@ -740,6 +740,92 @@ def test_run_environment_error_from_download_aborts_candidate_loop(tmp_path, mon
     assert dl.calls == [(c1.url, 1)]  # download was attempted for candidate 1 only
 
 
+# ----- self-heal: reconcile() re-queues orphaned DOWNLOADING movies -----
+
+
+def test_reconcile_requeues_orphaned_downloading_movie(tmp_path, monkeypatch):
+    # A run that died mid-download (e.g. container restart) leaves a movie
+    # stuck in DOWNLOADING forever with no file_path/folder. No download can
+    # survive a process restart, so any DOWNLOADING row reconcile() sees is
+    # by definition orphaned and must be re-queued.
+    dl = FakeDownloader()
+    p, store, jf = build(tmp_path, dl, monkeypatch, [], [])
+    store.upsert_movie(
+        _movie_row(
+            tmdb_id=1,
+            status=Status.DOWNLOADING,
+            file_path=None,
+            folder=None,
+            jellyfin_item_id="jf-1",
+        )
+    )
+
+    count = p.reconcile()
+
+    assert count == 1
+    m = store.get_movie(1)
+    assert m.status == Status.QUEUED
+    assert m.file_path is None
+    assert m.folder is None
+
+    logs = store.recent_activity()
+    warns = [row for row in logs if row["event"] == "interrupted_download_requeued"]
+    assert len(warns) == 1
+    assert warns[0]["level"] == "warn"
+    assert "interrupted download, re-queued" in warns[0]["message"]
+
+
+def test_run_redownloads_orphaned_downloading_movie(tmp_path, monkeypatch):
+    # reconcile() re-queues the orphan; run() must then actually re-download
+    # it through the normal candidate path.
+    dl = FakeDownloader()
+    p, store, jf = build(tmp_path, dl, monkeypatch, [cand(1)], [make_enriched(tmdb_id=1)])
+    store.upsert_movie(
+        _movie_row(tmdb_id=1, status=Status.DOWNLOADING, file_path=None, folder=None)
+    )
+
+    summary = p.run()
+
+    assert summary.downloaded == 1
+    m = store.get_movie(1)
+    assert m.status == Status.READY
+    assert m.file_path and os.path.exists(m.file_path)
+    assert dl.calls == [("https://www.youtube.com/watch?v=YT1", 1)]
+
+
+def test_reconcile_runs_exactly_once_before_discover(tmp_path, monkeypatch):
+    # reconcile() must run exactly once, at the very start of run(), BEFORE
+    # discover()/the candidate loop -- never again mid-run. Otherwise a
+    # movie this run legitimately sets to DOWNLOADING (while its download is
+    # in flight) would itself get clobbered back to QUEUED by a later
+    # reconcile pass within the same run.
+    dl = FakeDownloader()
+    p, store, jf = build(tmp_path, dl, monkeypatch, [cand(1)], [make_enriched(tmdb_id=1)])
+
+    order: list[str] = []
+    real_reconcile = p.reconcile
+
+    def spy_reconcile():
+        order.append("reconcile")
+        return real_reconcile()
+
+    monkeypatch.setattr(p, "reconcile", spy_reconcile)
+
+    real_discover = pipeline_mod.discover  # the lambda build() installed
+
+    def spy_discover(*a, **k):
+        order.append("discover")
+        return real_discover(*a, **k)
+
+    monkeypatch.setattr(pipeline_mod, "discover", spy_discover)
+
+    summary = p.run()
+
+    assert order == ["reconcile", "discover"]
+    assert summary.downloaded == 1
+    assert store.get_movie(1).status == Status.READY
+
+
 def test_run_leaves_ready_movie_with_existing_file_alone(tmp_path, monkeypatch):
     # A READY movie whose file still exists must not be touched or
     # re-downloaded by run()'s self-heal pass.

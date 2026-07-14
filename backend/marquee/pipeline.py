@@ -109,7 +109,17 @@ class RefreshPipeline:
         the DB would otherwise keep reporting it ready forever and never
         re-download it. Walk all READY movies and re-queue any whose
         file_path no longer exists on disk so the next run's download pass
-        picks it back up. Returns the number of movies reconciled."""
+        picks it back up.
+
+        Also heals orphaned DOWNLOADING rows: the pipeline is single-flight
+        and this method only ever runs at the start of run(), before this
+        run sets anything to DOWNLOADING. So any row still DOWNLOADING here
+        can only be left over from a run that died mid-download (e.g. a
+        container restart) — no download can survive a process restart, so
+        by definition it's orphaned and must be re-queued or it would sit
+        "downloading" forever with no file and nothing to pick it back up.
+
+        Returns the number of movies reconciled."""
         reconciled = 0
         for movie in self.store.list_movies([Status.READY]):
             if movie.file_path and os.path.isfile(movie.file_path):
@@ -130,6 +140,24 @@ class RefreshPipeline:
                 movie.tmdb_id,
             )
             reconciled += 1
+
+        for movie in self.store.list_movies([Status.DOWNLOADING]):
+            self.store.set_status(
+                movie.tmdb_id,
+                Status.QUEUED,
+                file_path=None,
+                folder=None,
+            )
+            emit_log(
+                self.store,
+                self.broadcaster,
+                "warn",
+                "interrupted_download_requeued",
+                f"interrupted download, re-queued: {movie.title}",
+                movie.tmdb_id,
+            )
+            reconciled += 1
+
         return reconciled
 
     def run(self) -> RunSummary:

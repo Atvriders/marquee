@@ -504,3 +504,129 @@ def test_basename_match_used_when_no_name_and_no_tmdb_overlap(tmp_path):
     check = by_id(result, "library_found")
     assert check["status"] == "ok"
     assert "LIB-CS" in check["detail"]
+
+
+# ----- CONFIDENT-OR-FAIL library resolution (live bug) -----
+
+
+def test_only_movies_library_without_marquee_content_fails_not_ok(tmp_path):
+    # THE live bug, asserted explicitly: exactly one Jellyfin movies library
+    # exists (the user's real personal film collection, not a Coming-Soon
+    # library they haven't created yet) and it contains none of Marquee's
+    # tmdb ids. The watchdog must NEVER fall back to "it's the only movies
+    # library, must be it" -- it must FAIL, and every downstream check that
+    # depends on the library must skip rather than silently run against the
+    # wrong library (which is how the live bug reported a false-positive
+    # "library found" plus 556 "trailer plays" that were actually the user
+    # watching their own films).
+    real_collection = {
+        "Name": "Movies",
+        "ItemId": "LIB-REAL",
+        "CollectionType": "movies",
+        "Locations": ["/data/real-movies"],
+        "LibraryOptions": {},
+    }
+    jf = FakeJellyfin(
+        folders=[real_collection],
+        items_by_lib={"LIB-REAL": [{"Id": "X", "ProviderIds": {"Tmdb": "999999"}}]},
+    )
+    wd, store = build(tmp_path, jf, jellyfin_library_name=None, library_dir="/library")
+    store.upsert_movie(mkmovie(1))  # Marquee's tmdb_id=1, absent from the real library
+
+    result = wd.run()
+
+    check = by_id(result, "library_found")
+    assert check["status"] == "fail"
+    assert result["ok"] is False
+    assert "Movies" in check["detail"]  # self-diagnosing: names what WAS found
+    for check_id in (
+        "library_metadata_safe", "items_visible", "trailer_extras_present",
+        "cinema_mode_plays_trailers", "playback_evidence",
+    ):
+        assert by_id(result, check_id)["status"] == "skip"
+
+
+def test_configured_name_match_detail_says_so(tmp_path):
+    jf = FakeJellyfin()
+    wd, store = build(tmp_path, jf, jellyfin_library_name="Coming Soon")
+
+    result = wd.run()
+
+    check = by_id(result, "library_found")
+    assert check["status"] == "ok"
+    assert "configured name" in check["detail"]
+
+
+def test_configured_name_case_insensitive(tmp_path):
+    jf = FakeJellyfin()
+    wd, store = build(tmp_path, jf, jellyfin_library_name="coming SOON")
+
+    result = wd.run()
+
+    check = by_id(result, "library_found")
+    assert check["status"] == "ok"
+    assert "LIB-CS" in check["detail"]
+
+
+def test_configured_name_not_found_lists_available_names(tmp_path):
+    jf = FakeJellyfin()  # folders = [Coming Soon (LIB-CS), Movies (LIB-MAIN)]
+    wd, store = build(tmp_path, jf, jellyfin_library_name="Does Not Exist")
+
+    result = wd.run()
+
+    check = by_id(result, "library_found")
+    assert check["status"] == "fail"
+    assert "Does Not Exist" in check["detail"]
+    assert "Coming Soon" in check["detail"]
+    assert "Movies" in check["detail"]
+    assert by_id(result, "items_visible")["status"] == "skip"
+
+
+def test_content_match_picks_library_with_matching_tmdb_ids(tmp_path):
+    lib_a = {**COMING_SOON_LIB, "Name": "A"}
+    lib_b = {**OTHER_LIB, "Name": "B"}
+    jf = FakeJellyfin(
+        folders=[lib_a, lib_b],
+        items_by_lib={
+            "LIB-CS": [{"Id": "X", "ProviderIds": {"Tmdb": "1"}}],
+            "LIB-MAIN": [{"Id": "Y", "ProviderIds": {"Tmdb": "2"}}],
+        },
+    )
+    wd, store = build(tmp_path, jf, jellyfin_library_name=None)
+    store.upsert_movie(mkmovie(1))
+
+    result = wd.run()
+
+    check = by_id(result, "library_found")
+    assert check["status"] == "ok"
+    assert "LIB-CS" in check["detail"]
+    assert "content" in check["detail"]
+
+
+def test_path_or_name_hint_used_when_store_empty(tmp_path):
+    # No Marquee movies at all -> content match has nothing to go on -> the
+    # library named "Coming Soon" (and whose Locations basename matches
+    # LIBRARY_DIR) must still be picked via the path/name hint.
+    jf = FakeJellyfin(folders=[COMING_SOON_LIB, OTHER_LIB], items_by_lib={})
+    wd, store = build(tmp_path, jf, jellyfin_library_name=None)
+
+    result = wd.run()
+
+    check = by_id(result, "library_found")
+    assert check["status"] == "ok"
+    assert "LIB-CS" in check["detail"]
+    assert "path-or-name hint" in check["detail"]
+
+
+def test_name_contains_coming_soon_hint_when_no_path_match(tmp_path):
+    lib_a = {**COMING_SOON_LIB, "Name": "My Coming Soon Shelf", "Locations": ["/somewhere/else"]}
+    lib_b = {**OTHER_LIB, "Name": "B", "Locations": ["/another/place"]}
+    jf = FakeJellyfin(folders=[lib_a, lib_b], items_by_lib={})
+    wd, store = build(tmp_path, jf, jellyfin_library_name=None, library_dir="/library")
+
+    result = wd.run()
+
+    check = by_id(result, "library_found")
+    assert check["status"] == "ok"
+    assert "LIB-CS" in check["detail"]
+    assert "path-or-name hint" in check["detail"]

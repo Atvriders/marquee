@@ -73,7 +73,10 @@ class Watchdog:
         folder, library_check = self._resolve_and_check_library(folders)
         checks.append(library_check)
         if folder is None:
-            self._skip_rest(checks, "library_found", "Coming-Soon library not found")
+            self._skip_rest(
+                checks, "library_found",
+                "needs the Coming-Soon library identified first (see library_found)",
+            )
             return self._finalize(checks, checked_at)
 
         library_item_id = folder.get("ItemId")
@@ -121,7 +124,7 @@ class Watchdog:
                 "library_found", "fail", reason or "No matching VirtualFolders entry found",
                 "Set JELLYFIN_LIBRARY_NAME to the exact library name in Jellyfin",
             )
-        detail = f"Matched '{folder.get('Name')}' (ItemId {folder.get('ItemId')}) via {method}"
+        detail = f"Matched '{folder.get('Name')}' (ItemId {folder.get('ItemId')}) by {method}"
         if folder.get("CollectionType") != "movies":
             return folder, _check(
                 "library_found", "warn", detail,
@@ -132,41 +135,65 @@ class Watchdog:
     def _resolve_library(
         self, folders: list[dict]
     ) -> tuple[dict | None, str | None, str | None]:
-        if not folders:
-            return None, None, "Jellyfin has no libraries configured"
+        """CONFIDENT-OR-FAIL library resolution. There is exactly one way this
+        should ever pick a wrong library: never. A user's real film
+        collection is very often the ONLY movies-type library Jellyfin has
+        (they may not have created a Coming-Soon library yet) — so unlike a
+        typical "if there's only one, it must be it" heuristic, having
+        exactly one movies library is NOT evidence it's ours. Every match
+        below must be positive evidence (an explicit name, Marquee's own
+        content, or a deliberate path/name hint); if none apply, fail loudly
+        rather than silently adopting the user's real library (verified live
+        bug: watchdog adopted the user's 5361-item personal collection and
+        reported false-positive "Coming-Soon library found" + trailer
+        playback evidence that was actually the user watching their own
+        films)."""
+        movies_folders = [f for f in folders if f.get("CollectionType") == "movies"]
+        names = sorted(f.get("Name") or "?" for f in movies_folders)
 
         if self.config.jellyfin_library_name:
+            # Matched by exact configured name is checked across ALL
+            # folders (not just movies-type ones): an explicit name is the
+            # highest-confidence signal there is, and a CollectionType
+            # mismatch on the matched folder is still surfaced (as a warn,
+            # by the caller) rather than silently treated as "not found".
+            wanted = self.config.jellyfin_library_name.strip().lower()
             for f in folders:
-                if f.get("Name") == self.config.jellyfin_library_name:
+                if (f.get("Name") or "").strip().lower() == wanted:
                     return f, "configured name", None
             return (
                 None, None,
-                f"No library named {self.config.jellyfin_library_name!r} found",
+                f"configured JELLYFIN_LIBRARY_NAME={self.config.jellyfin_library_name!r} "
+                f"not found among Jellyfin's movies libraries: {names}",
             )
 
-        movies_folders = [f for f in folders if f.get("CollectionType") == "movies"]
-        pool = movies_folders or folders
-        if len(pool) == 1:
-            return pool[0], "only movies library", None
-
-        best = self._best_tmdb_match(pool)
+        best = self._best_tmdb_match(movies_folders)
         if best is not None:
-            return best, "tmdb id overlap", None
+            return best, "content tmdb-id match", None
 
         base = os.path.basename(os.path.normpath(self.config.library_dir))
-        for f in pool:
-            for loc in f.get("Locations") or []:
-                if os.path.basename(os.path.normpath(loc)) == base:
-                    return f, "basename match", None
+        for f in movies_folders:
+            locations = f.get("Locations") or []
+            path_hit = any(
+                os.path.basename(os.path.normpath(loc)) == base for loc in locations
+            )
+            name_hit = "coming soon" in (f.get("Name") or "").lower()
+            if path_hit or name_hit:
+                return f, "path-or-name hint", None
 
-        return None, None, "Multiple movies libraries and none matched by name/content/path"
+        return (
+            None, None,
+            f"No Coming Soon library identified in Jellyfin (found movies libraries: "
+            f"{names}). Marquee writes trailers to {self.config.library_dir!r} — add "
+            f"that folder to Jellyfin as a Movies library, or set JELLYFIN_LIBRARY_NAME.",
+        )
 
-    def _best_tmdb_match(self, pool: list[dict]) -> dict | None:
+    def _best_tmdb_match(self, movies_folders: list[dict]) -> dict | None:
         marquee_ids = {m.tmdb_id for m in self.store.list_movies()}
         if not marquee_ids:
             return None
         best, best_score = None, 0
-        for f in pool:
+        for f in movies_folders:
             item_id = f.get("ItemId")
             if not item_id:
                 continue
