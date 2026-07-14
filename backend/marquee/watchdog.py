@@ -218,12 +218,19 @@ class Watchdog:
             source = "server-wide defaults (no per-library Movie TypeOptions entry)"
 
         if bad:
+            # NOT a failure: Cinema Mode selects trailers by LocalTrailers (the file
+            # layout), not metadata, so online fetchers cannot break playback. All
+            # that's at stake is whether Marquee's NFO stays authoritative — the
+            # "Coming Soon"/"Trailer" tags and the "COMING SOON…" plot framing may be
+            # replaced by TMDb's own (correct, richer) metadata. That's a preference.
             return _check(
-                "library_metadata_safe", "fail",
-                f"TMDb-family metadata is enabled via {source}: {sorted(bad)} — it will "
-                f"overwrite Marquee's NFO",
-                "Disable TheMovieDb (and The Open Movie Database) as a metadata/image "
-                "fetcher for this library",
+                "library_metadata_safe", "warn",
+                f"TMDb-family fetchers are enabled via {source}: {sorted(bad)}. Jellyfin "
+                f"may replace Marquee's 'Coming Soon'/'Trailer' tags and plot framing "
+                f"with TMDb's own metadata. Cinema Mode is unaffected.",
+                "Fine to leave on if you prefer richer TMDb metadata. Disable "
+                "TheMovieDb / The Open Movie Database as metadata+image fetchers for "
+                "this library only if you want Marquee's NFO to stay authoritative.",
             )
 
         local_order = library_options.get("LocalMetadataReaderOrder") or []

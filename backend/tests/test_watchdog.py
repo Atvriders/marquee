@@ -214,10 +214,12 @@ def test_tmdb_fetcher_enabled_fails(tmp_path):
 
     result = wd.run()
 
+    # A WARN, not a fail: online fetchers cannot break Cinema Mode (it selects on
+    # LocalTrailers, not metadata). Only Marquee's tags/plot framing are at stake.
     check = by_id(result, "library_metadata_safe")
-    assert check["status"] == "fail"
+    assert check["status"] == "warn"
     assert "TheMovieDb" in check["detail"]
-    assert result["ok"] is False
+    assert "Cinema Mode is unaffected" in check["detail"]
 
 
 def test_empty_type_options_falls_back_to_server_defaults_which_enable_tmdb(tmp_path):
@@ -240,7 +242,7 @@ def test_empty_type_options_falls_back_to_server_defaults_which_enable_tmdb(tmp_
     result = wd.run()
 
     check = by_id(result, "library_metadata_safe")
-    assert check["status"] == "fail"
+    assert check["status"] == "warn"
     assert "server-wide defaults" in check["detail"]
 
 
