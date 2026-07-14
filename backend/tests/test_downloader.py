@@ -129,6 +129,14 @@ def test_download_missing_requested_downloads(monkeypatch, tmp_path):
         ("Requested format is not available", ErrorKind.NO_FORMAT),
         ("This video is DRM protected", ErrorKind.DRM),
         ("Some other weird error", ErrorKind.ERROR),
+        (
+            "ERROR: unable to open for writing: [Errno 13] Permission denied: "
+            "'/config/tmp/Movie [abc].mkv.part'",
+            ErrorKind.ENVIRONMENT,
+        ),
+        ("[Errno 28] No space left on device", ErrorKind.ENVIRONMENT),
+        ("OSError: [Errno 30] Read-only file system: '/config/tmp'", ErrorKind.ENVIRONMENT),
+        ("EDQUOT: disk quota exceeded", ErrorKind.ENVIRONMENT),
     ],
 )
 def test_download_classifies(monkeypatch, tmp_path, msg, kind):

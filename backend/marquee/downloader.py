@@ -42,6 +42,21 @@ def normalize_cookies_text(text: str) -> str:
 
 def _classify_message(msg: str) -> ErrorKind:
     m = msg.lower()
+    # Local/host environment problems (bad mount, full disk, wrong perms) must
+    # win over every other branch below: they masquerade as "video is bad"
+    # failures (e.g. yt-dlp reports the FIRST candidate's unrelated rejection
+    # reason) while burning through every remaining candidate, which is
+    # deeply misleading. These are never the trailer's fault.
+    if (
+        "permission denied" in m
+        or "errno 13" in m
+        or "unable to open for writing" in m
+        or "no space left" in m
+        or "errno 28" in m
+        or "read-only file system" in m
+        or "disk quota" in m
+    ):
+        return ErrorKind.ENVIRONMENT
     if (
         "confirm your age" in m
         or "inappropriate for some users" in m

@@ -37,7 +37,43 @@ class Components:
     watchdog: object
 
 
+def _ensure_writable_dir(path: str) -> None:
+    """Create `path` if it doesn't exist yet, then verify the current process
+    can actually write into it. A uid/gid mismatch between the container and
+    a host bind-mount (the verified live-deployment failure: /config/tmp not
+    writable) is otherwise invisible until it resurfaces much later as a
+    cryptic per-download yt-dlp "Errno 13" deep inside the pipeline. Fail
+    loudly here instead."""
+    uid, gid = os.getuid(), os.getgid()
+    try:
+        os.makedirs(path, exist_ok=True)
+        probe = os.path.join(path, f".marquee-write-check-{os.getpid()}")
+        with open(probe, "w", encoding="utf-8") as fh:
+            fh.write("ok")
+        os.remove(probe)
+    except OSError as e:
+        message = (
+            f"Directory {path!r} is not writable by this process "
+            f"(running as uid={uid} gid={gid}): {e}. Marquee cannot start. "
+            "Hint: containers commonly run as uid=99 gid=100 (Unraid's "
+            "'nobody:users') — chown the HOST directory to match, or set "
+            "PUID/PGID to the directory's actual owner."
+        )
+        print(f"FATAL: {message}")
+        raise RuntimeError(message) from e
+
+
+def _check_data_dirs_writable(config: Config) -> None:
+    """Verify every directory Marquee writes to (state db, library, and the
+    yt-dlp temp dir) is actually writable before anything else touches disk."""
+    _ensure_writable_dir(config.config_dir)
+    _ensure_writable_dir(config.library_dir)
+    _ensure_writable_dir(os.path.join(config.config_dir, "tmp"))
+
+
 def build_components(config: Config) -> Components:
+    _check_data_dirs_writable(config)
+
     # Cookies pasted inline via YTDLP_COOKIES_TEXT are written to a file in /config
     # (normalized) and the downloader is pointed at it — no separate cookies file
     # to mount. An explicit YTDLP_COOKIES path still takes precedence.

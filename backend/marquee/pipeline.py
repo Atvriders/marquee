@@ -261,6 +261,13 @@ class RefreshPipeline:
 
             first_error_kind: ErrorKind | None = None
             first_error_msg: str | None = None
+            # An ENVIRONMENT error (e.g. /config/tmp not writable) is a fact
+            # about the host, not about any particular candidate: every
+            # remaining candidate would fail the exact same way, and
+            # reporting the FIRST candidate's unrelated rejection reason
+            # (e.g. "this video is not available") is actively misleading.
+            # Once we see one, stop probing/downloading immediately.
+            env_error: tuple[ErrorKind, str] | None = None
             succeeded = False
 
             for candidate in trailer_candidates:
@@ -284,6 +291,9 @@ class RefreshPipeline:
                         f"({kind.value}): {msg}",
                         enriched.tmdb_id,
                     )
+                    if kind == ErrorKind.ENVIRONMENT:
+                        env_error = (kind, msg)
+                        break
                     continue
 
                 try:
@@ -302,6 +312,9 @@ class RefreshPipeline:
                         f"({e.kind.value}): {e.message}",
                         enriched.tmdb_id,
                     )
+                    if e.kind == ErrorKind.ENVIRONMENT:
+                        env_error = (e.kind, e.message)
+                        break
                     continue
 
                 written = self.writer.write_movie(enriched, result.path)
@@ -327,10 +340,28 @@ class RefreshPipeline:
                 break
 
             if not succeeded:
-                final_kind = first_error_kind or ErrorKind.NO_FORMAT
-                final_msg = (
-                    first_error_msg or "pre-validate failed: no suitable format"
-                )
+                if env_error is not None:
+                    # The real cause is the host environment, not the
+                    # trailer — report it as such, not as "all candidates
+                    # failed" (which would surface a misleading per-video
+                    # reason instead).
+                    final_kind, final_msg = env_error
+                    event = "environment_error"
+                    log_msg = (
+                        f"{enriched.title}: aborting candidate loop after an "
+                        f"ENVIRONMENT error (not a bad trailer) — "
+                        f"({final_kind.value}): {final_msg}"
+                    )
+                else:
+                    final_kind = first_error_kind or ErrorKind.NO_FORMAT
+                    final_msg = (
+                        first_error_msg or "pre-validate failed: no suitable format"
+                    )
+                    event = "download_failed"
+                    log_msg = (
+                        f"{enriched.title}: all trailer candidates failed "
+                        f"({final_kind.value}): {final_msg}"
+                    )
                 self.store.set_status(
                     enriched.tmdb_id,
                     Status.FAILED,
@@ -342,9 +373,8 @@ class RefreshPipeline:
                     self.store,
                     self.broadcaster,
                     "error",
-                    "download_failed",
-                    f"{enriched.title}: all trailer candidates failed "
-                    f"({final_kind.value}): {final_msg}",
+                    event,
+                    log_msg,
                     enriched.tmdb_id,
                 )
                 summary.failed += 1

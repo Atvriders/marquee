@@ -21,6 +21,7 @@ class ErrorKind(str, Enum):
     NO_FORMAT = "no_format"
     NO_TRAILER = "no_trailer"
     DRM = "drm"
+    ENVIRONMENT = "environment"
     ERROR = "error"
 
 

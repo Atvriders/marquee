@@ -13,6 +13,15 @@ _CINEMA_MODE_PLUGIN_ID = "5fcefe1b-df1f-4596-ac57-f2f939c294c5"
 _TMDB_PROVIDER_NAMES = {"TheMovieDb", "The Open Movie Database"}
 _SETTINGS_KEY = "_watchdog_last"
 
+
+def _norm_guid(value: str | None) -> str:
+    """Jellyfin's /Plugins endpoint returns GUIDs WITHOUT dashes (verified
+    against a live server), but other endpoints/config may return the dashed
+    form. Never compare raw GUIDs — always normalize both sides through
+    this."""
+    return (value or "").replace("-", "").lower()
+
+
 _LABELS: dict[str, str] = {
     "jellyfin_reachable": "Jellyfin reachable",
     "library_found": "Coming-Soon library found",
@@ -257,22 +266,39 @@ class Watchdog:
         try:
             plugins = self.jellyfin.plugins()
         except Exception as e:  # noqa: BLE001
-            return _check("cinema_plugin", "fail", f"error listing plugins: {e}")
-        plugin = next((p for p in plugins if p.get("Id") == _CINEMA_MODE_PLUGIN_ID), None)
+            # This is an ENVIRONMENT/connectivity failure, not evidence the
+            # plugin is absent — must not be conflated with "not installed".
+            return _check("cinema_plugin", "fail", f"could not list plugins: {e}")
+
+        target = _norm_guid(_CINEMA_MODE_PLUGIN_ID)
+        plugin = next((p for p in plugins if _norm_guid(p.get("Id")) == target), None)
+        matched_by_name = False
         if plugin is None:
+            # A fork/rebuild may ship under a different GUID; fall back to a
+            # name match so it's still detected.
+            plugin = next(
+                (p for p in plugins if "cinema" in (p.get("Name") or "").lower()), None
+            )
+            matched_by_name = plugin is not None
+
+        if plugin is None:
+            found = ", ".join(sorted(p.get("Name") or "?" for p in plugins)) or "none"
             return _check(
-                "cinema_plugin", "fail", "Cinema Mode plugin is not installed",
+                "cinema_plugin", "fail",
+                f"Cinema Mode plugin is not installed (plugins found: {found})",
                 "Install the CherryFloors Cinema Mode plugin",
             )
+
         status = plugin.get("Status")
         if status != "Active":
             return _check(
                 "cinema_plugin", "warn", f"Cinema Mode plugin status is {status!r}",
                 "Check the plugin logs / restart Jellyfin",
             )
-        return _check(
-            "cinema_plugin", "ok", f"Cinema Mode v{plugin.get('Version', '?')} active"
-        )
+        detail = f"Cinema Mode v{plugin.get('Version', '?')} active"
+        if matched_by_name:
+            detail += " (matched by name; plugin id did not match the known GUID)"
+        return _check("cinema_plugin", "ok", detail)
 
     def _check_trailer_extras(self) -> dict:
         ready = self.store.list_movies([Status.READY])
@@ -303,8 +329,9 @@ class Watchdog:
 
     def _check_cinema_mode_ground_truth(self, folders: list[dict], our_library: dict) -> dict:
         movies_folders = [f for f in folders if f.get("CollectionType") == "movies"]
+        our_library_id = _norm_guid(our_library.get("ItemId"))
         other_folders = [
-            f for f in movies_folders if f.get("ItemId") != our_library.get("ItemId")
+            f for f in movies_folders if _norm_guid(f.get("ItemId")) != our_library_id
         ]
         if not other_folders:
             return _check(
@@ -350,14 +377,14 @@ class Watchdog:
             )
 
         our_ids = {
-            m.jellyfin_item_id
+            _norm_guid(m.jellyfin_item_id)
             for m in self.store.list_movies([Status.READY])
             if m.jellyfin_item_id
         }
         library_dir = self.config.library_dir or ""
 
         def _belongs_to_marquee(item: dict) -> bool:
-            if item.get("Id") in our_ids:
+            if _norm_guid(item.get("Id")) in our_ids:
                 return True
             path = item.get("Path") or ""
             return bool(library_dir) and path.startswith(library_dir)

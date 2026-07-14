@@ -562,13 +562,29 @@ class ScriptedDownloader:
                 availability="error", error_kind=ErrorKind.NO_FORMAT,
                 error_msg="no format with height <= 1080 available",
             )
+        if outcome == "environment":
+            return ProbeResult(
+                ok=False, duration=None, title=None, has_maxheight=False,
+                availability="error", error_kind=ErrorKind.ENVIRONMENT,
+                error_msg=(
+                    "unable to open for writing: [Errno 13] Permission denied: "
+                    "'/config/tmp/x.part'"
+                ),
+            )
         return ProbeResult(ok=True, duration=90, title="M", has_maxheight=True, availability="public")
 
     def download(self, url, dest_dir, tmdb_id):
         self.calls.append((url, tmdb_id))
         key = self._key_for(url)
-        if self.outcomes.get(key) == "download_fail":
+        outcome = self.outcomes.get(key)
+        if outcome == "download_fail":
             raise DownloadFailed(ErrorKind.UNAVAILABLE, "video removed")
+        if outcome == "environment_download":
+            raise DownloadFailed(
+                ErrorKind.ENVIRONMENT,
+                "unable to open for writing: [Errno 13] Permission denied: "
+                "'/config/tmp/x.part'",
+            )
         os.makedirs(dest_dir, exist_ok=True)
         p = os.path.join(dest_dir, f"{tmdb_id}.mkv")
         open(p, "wb").close()
@@ -670,6 +686,58 @@ def test_run_respects_trailer_max_candidates(tmp_path, monkeypatch):
     assert summary.failed == 1
     assert summary.downloaded == 0
     assert len(dl.probe_calls) == 3  # capped, never reaches the working C9
+
+
+def test_run_environment_error_aborts_candidate_loop(tmp_path, monkeypatch):
+    # Verified live failure: /config/tmp not writable. The FIRST candidate's
+    # download blows up with a permission error; the loop must NOT burn
+    # through the remaining candidates (which would each fail the exact same
+    # way and bury the real cause behind an unrelated per-video message).
+    c1 = _candidate("ENV1")
+    c2 = _candidate("OK2", size=720)
+    dl = ScriptedDownloader({"ENV1": "environment"})
+    p, store, jf = build(
+        tmp_path, dl, monkeypatch, [cand()],
+        [make_enriched(trailer=c1, youtube_key=c1.key, trailer_candidates=[c1, c2])],
+    )
+
+    summary = p.run()
+
+    assert summary.downloaded == 0
+    assert summary.failed == 1
+    m = store.get_movie(1)
+    assert m.status == Status.FAILED
+    assert m.error_kind == ErrorKind.ENVIRONMENT.value
+    assert "permission" in m.error_msg.lower()
+    # only the first candidate was ever probed/downloaded
+    assert dl.probe_calls == [c1.url]
+    assert dl.calls == []
+
+    logs = store.recent_activity()
+    env_logs = [row for row in logs if row["event"] == "environment_error"]
+    assert len(env_logs) == 1
+    assert env_logs[0]["level"] == "error"
+
+
+def test_run_environment_error_from_download_aborts_candidate_loop(tmp_path, monkeypatch):
+    # Same, but the environment error surfaces from download() rather than
+    # probe() (probe can succeed while the actual write to disk fails).
+    c1 = _candidate("ENV1")
+    c2 = _candidate("OK2", size=720)
+    dl = ScriptedDownloader({"ENV1": "environment_download"})
+    p, store, jf = build(
+        tmp_path, dl, monkeypatch, [cand()],
+        [make_enriched(trailer=c1, youtube_key=c1.key, trailer_candidates=[c1, c2])],
+    )
+
+    summary = p.run()
+
+    assert summary.failed == 1
+    m = store.get_movie(1)
+    assert m.status == Status.FAILED
+    assert m.error_kind == ErrorKind.ENVIRONMENT.value
+    assert dl.probe_calls == [c1.url]
+    assert dl.calls == [(c1.url, 1)]  # download was attempted for candidate 1 only
 
 
 def test_run_leaves_ready_movie_with_existing_file_alone(tmp_path, monkeypatch):

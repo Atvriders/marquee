@@ -295,6 +295,8 @@ def test_plugin_missing_fails(tmp_path):
     check = by_id(result, "cinema_plugin")
     assert check["status"] == "fail"
     assert result["ok"] is False
+    # self-diagnosing: the names of the plugins that WERE found are surfaced
+    assert "Something Else" in check["detail"]
 
 
 def test_plugin_present_but_not_active_warns(tmp_path):
@@ -306,6 +308,56 @@ def test_plugin_present_but_not_active_warns(tmp_path):
     check = by_id(result, "cinema_plugin")
     assert check["status"] == "warn"
     assert result["ok"] is True  # warn doesn't flip overall ok
+
+
+def test_plugin_found_when_guid_is_dashless(tmp_path):
+    # VERIFIED against the user's live Jellyfin: GET /Plugins returns GUIDs
+    # WITHOUT dashes. This is the real-world case the exact-match bug missed.
+    dashless = {**PLUGIN_ACTIVE, "Id": CINEMA_MODE_ID.replace("-", "")}
+    jf = FakeJellyfin(plugin_list=[dashless])
+    wd, store = build(tmp_path, jf)
+
+    result = wd.run()
+
+    check = by_id(result, "cinema_plugin")
+    assert check["status"] == "ok"
+    assert result["ok"] is True
+
+
+def test_plugin_found_when_guid_is_dashed(tmp_path):
+    dashed = {**PLUGIN_ACTIVE, "Id": CINEMA_MODE_ID}
+    jf = FakeJellyfin(plugin_list=[dashed])
+    wd, store = build(tmp_path, jf)
+
+    result = wd.run()
+
+    check = by_id(result, "cinema_plugin")
+    assert check["status"] == "ok"
+
+
+def test_plugin_found_by_name_when_guid_does_not_match(tmp_path):
+    # A fork/rebuild with a different GUID must still be detected by name.
+    forked = {**PLUGIN_ACTIVE, "Id": "deadbeefdeadbeefdeadbeefdeadbeef", "Name": "Cinema Mode Fork"}
+    jf = FakeJellyfin(plugin_list=[forked])
+    wd, store = build(tmp_path, jf)
+
+    result = wd.run()
+
+    check = by_id(result, "cinema_plugin")
+    assert check["status"] == "ok"
+    assert "name" in check["detail"].lower()
+
+
+def test_plugin_list_call_raises_reports_fail_not_not_installed(tmp_path):
+    jf = FakeJellyfin(raise_on={"plugins"})
+    wd, store = build(tmp_path, jf)
+
+    result = wd.run()
+
+    check = by_id(result, "cinema_plugin")
+    assert check["status"] == "fail"
+    assert "could not list plugins" in check["detail"]
+    assert "not installed" not in check["detail"]
 
 
 def test_intros_empty_fails(tmp_path):
